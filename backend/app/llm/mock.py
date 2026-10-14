@@ -1,0 +1,202 @@
+"""Офлайн-провайдер для демо и тестов.
+
+Нужен по двум причинам: показ не должен зависеть от сети и квот, а валидаторы
+и рендереры надо тестировать без обращения к модели. Возвращает структурно
+корректные ответы по маркеру `SKILL:<name>` в системном промпте.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from app.llm.base import Completion, LLMProvider, Usage
+
+_SKILL = re.compile(r"SKILL:([a-z_]+)")
+
+
+class MockProvider(LLMProvider):
+    name = "mock"
+    model = "mock-offline"
+
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4000,
+        json_mode: bool = False,
+    ) -> Completion:
+        match = _SKILL.search(system)
+        skill = match.group(1) if match else "unknown"
+        payload = _DISPATCH.get(skill, lambda _: {"error": f"mock: нет заготовки для {skill}"})(user)
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        return Completion(
+            text=text,
+            usage=Usage(prompt_tokens=len(system + user) // 4, completion_tokens=len(text) // 4),
+            model=self.model,
+        )
+
+
+# --------------------------------------------------------------------------- #
+def _mock_intake(user: str) -> dict:
+    low = user.lower()
+    hours = None
+    for m in re.finditer(r"(\d{2,3})\s*(?:академических\s*)?час", low):
+        hours = float(m.group(1))
+        break
+    is_obsh = "общеразвивающ" in low or "школьник" in low
+    missing = []
+    if hours is None:
+        missing.append("total_hours")
+    if not is_obsh and "повышения квалификации" not in low:
+        missing.append("program_type")
+    return {
+        "program_type": "dop_obsh" if is_obsh else "dpp_pk",
+        "program_type_confidence": 0.9 if (is_obsh or "повышения квалификации" in low) else 0.4,
+        "title": "Программа по запросу методиста",
+        "direction": "ИТ",
+        "total_hours": hours,
+        "audience": "слушатели по описанию запроса",
+        "entry_level": "не указан",
+        "study_form": "ochno_zaochnaya",
+        "attestation_form": "защита проекта",
+        "constraints": [],
+        "missing": missing,
+        "questions": [
+            {"field": f, "question": f"Уточните параметр: {f}"} for f in missing
+        ][:5],
+    }
+
+
+def _mock_skeleton(user: str) -> dict:
+    return {
+        "goal": "Сформировать у слушателей практические навыки по заявленному направлению.",
+        "objectives": [
+            "дать системное представление о предметной области",
+            "отработать ключевые инструменты на практических задачах",
+            "подготовить слушателей к итоговой аттестации",
+        ],
+        "annotation": "Программа построена на практических задачах предметной области.",
+        "relevance": "Направление входит в число наиболее востребованных на рынке труда.",
+        "entry_requirements": "Базовая компьютерная грамотность.",
+        "outcomes": [
+            {"id": "RO-1", "kind": "знание", "text": "основные понятия и инструменты направления"},
+            {"id": "RO-2", "kind": "умение", "text": "применять инструменты для типовых задач"},
+            {"id": "RO-3", "kind": "навык", "text": "самостоятельно выполнять итоговый проект"},
+        ],
+        "competencies": [
+            {
+                "id": "PK-1",
+                "title": "Выполнение типовых задач направления",
+                "activity": "Профессиональная деятельность по направлению программы",
+                "outcome_ids": ["RO-1", "RO-2", "RO-3"],
+            }
+        ],
+        "modules": [
+            {
+                "index": 1,
+                "title": "Введение и базовые инструменты",
+                "weight": 3,
+                "mix": {"lectures": 2, "practice": 2, "labs": 0, "self_study": 1},
+                "assessment_form": "Текущий контроль: тестирование",
+                "outcome_ids": ["RO-1"],
+                "topics": [
+                    {"title": "Обзор направления и инструментов", "weight": 1, "outcome_ids": ["RO-1"]},
+                    {"title": "Базовые конструкции и первые задачи", "weight": 2, "outcome_ids": ["RO-1", "RO-2"]},
+                ],
+            },
+            {
+                "index": 2,
+                "title": "Практическое применение",
+                "weight": 4,
+                "mix": {"lectures": 1, "practice": 3, "labs": 0, "self_study": 1},
+                "assessment_form": "Текущий контроль: практическая работа",
+                "outcome_ids": ["RO-2"],
+                "topics": [
+                    {"title": "Типовые задачи предметной области", "weight": 2, "outcome_ids": ["RO-2"]},
+                    {"title": "Разбор кейсов и отладка решений", "weight": 2, "outcome_ids": ["RO-2", "RO-3"]},
+                ],
+            },
+            {
+                "index": 3,
+                "title": "Итоговый проект",
+                "weight": 2,
+                "mix": {"lectures": 1, "practice": 3, "labs": 0, "self_study": 2},
+                "assessment_form": "",
+                "outcome_ids": ["RO-3"],
+                "topics": [
+                    {"title": "Проектирование и сборка решения", "weight": 1, "outcome_ids": ["RO-3"]},
+                    {"title": "Подготовка защиты проекта", "weight": 1, "outcome_ids": ["RO-3"]},
+                ],
+            },
+        ],
+        "final_attestation": {
+            "form": "защита проекта",
+            "description": "Слушатель защищает проект, выполненный по материалам программы.",
+            "criteria": [
+                "работоспособность решения",
+                "соответствие требованиям задания",
+                "качество защиты и ответов на вопросы",
+            ],
+        },
+        "sources": [
+            {"kind": "main", "citation": "Официальная документация используемых инструментов", "url": None}
+        ],
+    }
+
+
+def _mock_topic_content(user: str) -> dict:
+    return {
+        "content": "Ключевые понятия темы, разбор примеров, типовые ошибки.",
+        "activities": "Практическое занятие: выполнение задания по теме с разбором результата.",
+    }
+
+
+def _mock_tests(user: str) -> dict:
+    return {
+        "questions": [
+            {
+                "stem": "Что из перечисленного относится к теме занятия?",
+                "options": ["Верный вариант", "Неверный вариант 1", "Неверный вариант 2", "Неверный вариант 3"],
+                "correct": [0],
+                "explanation": "Проверяется базовое понятие темы.",
+                "difficulty": "easy",
+            }
+        ]
+    }
+
+
+def _mock_seminars(user: str) -> dict:
+    return {
+        "tasks": [
+            {
+                "title": "Практическое задание по теме",
+                "statement": "Выполните задание на материале темы и оформите результат.",
+                "deliverable": "Файл с решением и краткий отчёт",
+                "criteria": ["решение работает", "оформление соответствует требованиям"],
+            }
+        ]
+    }
+
+
+def _mock_lecture(user: str) -> dict:
+    return {
+        "objectives": ["разобрать ключевые понятия темы"],
+        "timing": ["введение — 5 мин", "основная часть — 60 мин", "итоги — 10 мин"],
+        "slides": [
+            {"title": "Тема занятия", "bullets": ["план занятия", "зачем это нужно"], "notes": "Вступление."},
+            {"title": "Ключевые понятия", "bullets": ["понятие 1", "понятие 2"], "notes": "Разбор."},
+            {"title": "Практика", "bullets": ["задание", "критерии"], "notes": "Переход к практике."},
+        ],
+    }
+
+
+_DISPATCH = {
+    "intake": _mock_intake,
+    "skeleton": _mock_skeleton,
+    "topic_content": _mock_topic_content,
+    "tests": _mock_tests,
+    "seminars": _mock_seminars,
+    "lecture": _mock_lecture,
+}

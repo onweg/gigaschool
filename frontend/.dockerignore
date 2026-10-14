@@ -1,0 +1,9 @@
+# node_modules с хоста ломают сборку: `COPY . .` затирает то, что поставил
+# `npm ci` внутри образа, и в контейнер попадают бинарники и симлинки с macOS.
+node_modules
+dist
+.env
+.env.*
+*.log
+.DS_Store
+tsconfig.tsbuildinfo

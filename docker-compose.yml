@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      # mock — офлайн-демо без обращения к модели; openai_compat — реальная модель
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://llm.api.cloud.yandex.net/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_AUTH_SCHEME: ${LLM_AUTH_SCHEME:-Api-Key}
+      PRICE_PROMPT_PER_1K: ${PRICE_PROMPT_PER_1K:-0.20}
+      PRICE_COMPLETION_PER_1K: ${PRICE_COMPLETION_PER_1K:-0.60}
+      DATA_DIR: /app/data
+    volumes:
+      - ./backend/data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:80"

@@ -457,10 +457,7 @@ textarea:focus, input:focus { border-color: var(--green); }
 
 /* ------------------------------------ Строка статуса генерации */
 .statusline { display: flex; align-items: center; gap: 9px; padding: 2px 2px 2px 0; }
-.statusline .sl-mark {
-  width: 13px; height: 13px; flex: 0 0 auto; border-radius: 4px;
-  border: 1.5px solid var(--green); border-right-color: transparent;
-}
+.statusline .sl-mark { flex: 0 0 auto; color: var(--green); overflow: visible; }
 .statusline .sl-label { font-size: 13px; color: var(--text-dim); }
 .statusline .sl-time {
   margin-left: auto; font-family: var(--font-mono); font-size: 11.5px;

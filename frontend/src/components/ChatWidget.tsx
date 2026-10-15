@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ParsedReference } from "../lib/api";
 import type { SessionState } from "../lib/types";
 import { References } from "./References";
-import { formatDuration, StatusLine, Typing } from "./Motion";
+import { formatDuration, StatusLine, Typing, type MarkKind } from "./Motion";
 
 export type Message = { role: "user" | "bot" | "sys"; text: string };
 
@@ -26,18 +26,28 @@ const ORDER: SessionState["stage"][] = [
 
 /** Чем агент занят на каркасе: бэкенд отдаёт результат одним ответом,
  *  поэтому шаги показываем по таймеру — они соответствуют порядку в pipeline. */
-const SKELETON_STEPS = [
-  "Разбираю запрос и подбираю шаблон",
-  "Сверяюсь с нормативкой и профстандартами",
-  "Строю карту компетенций",
-  "Раскладываю модули и темы",
-  "Считаю часы и проверяю суммы",
+const SKELETON_STEPS: { mark: MarkKind; label: string }[] = [
+  { mark: "parse", label: "Разбираю запрос и подбираю шаблон" },
+  { mark: "legal", label: "Сверяюсь с нормативкой и профстандартами" },
+  { mark: "map", label: "Строю карту компетенций" },
+  { mark: "plan", label: "Раскладываю модули и темы" },
+  { mark: "hours", label: "Считаю часы и проверяю суммы" },
 ];
 
-const BUSY_LABEL: Record<string, string> = {
-  create: "Разбираю запрос",
-  answers: "Учитываю уточнения",
-  approve: "Утверждаю каркас",
+const BUSY_STEP: Record<string, { mark: MarkKind; label: string }> = {
+  create: { mark: "parse", label: "Разбираю запрос" },
+  answers: { mark: "parse", label: "Учитываю уточнения" },
+  approve: { mark: "check", label: "Утверждаю каркас" },
+};
+
+/** Стадию события проставляет пайплайн — значок меняется строго под шаг. */
+const STAGE_MARK: Record<string, MarkKind> = {
+  content: "parse",
+  tests: "tests",
+  seminars: "seminars",
+  lectures: "slides",
+  ready: "check",
+  skeleton: "plan",
 };
 
 const FIELD_LABEL: Record<string, string> = {
@@ -127,12 +137,14 @@ export function ChatWidget({
 
   const trace = (session?.events ?? []).slice(-4).reverse();
   const lastEvent = session?.events?.[session.events.length - 1];
-  const statusLabel =
+  const step =
     session?.stage === "content"
-      ? lastEvent?.message?.split(":")[0] ?? "Собираю содержание"
-      : busy && BUSY_LABEL[busy]
-        ? BUSY_LABEL[busy]
-        : SKELETON_STEPS[tick % SKELETON_STEPS.length];
+      ? {
+          mark: STAGE_MARK[lastEvent?.stage ?? ""] ?? "parse",
+          label: lastEvent?.message?.split(":")[0] ?? "Собираю содержание",
+        }
+      : (busy ? BUSY_STEP[busy] : undefined) ??
+        SKELETON_STEPS[tick % SKELETON_STEPS.length];
   // Утверждение каркаса бэкенд отклоняет, пока есть ошибки автопроверки.
   const blocking = (session?.report?.findings ?? []).filter((f) => f.severity === "error");
 
@@ -218,7 +230,7 @@ export function ChatWidget({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
                 >
-                  <StatusLine label={statusLabel} since={since} />
+                  <StatusLine label={step.label} mark={step.mark} since={since} />
                 </motion.div>
               )}
 

@@ -30,13 +30,14 @@ from app.pipeline.content import (
     generate_seminars,
     generate_tests,
 )
-from app.pipeline.intake import apply_answers, run_intake
+from app.pipeline.intake import apply_answers, reask_text, run_intake
 from app.pipeline.references import parse_reference
 from app.pipeline.skeleton import build_skeleton
 from app.render.docx_acr import render_docx
 from app.render.lms import render_gift, render_tests_csv
 from app.render.pptx_slides import render_pptx
 from app.schemas.ir import Hours
+from app.schemas.request import ClarifyingQuestion
 from app.skills import list_skills
 from app.store import Session, Stage, store
 
@@ -163,6 +164,8 @@ def _state(session: Session) -> dict[str, Any]:
         ),
         "economics": session.economics(),
         "error": session.error,
+        "unparsed": [],
+        "reask": {},
     }
 
 
@@ -297,10 +300,25 @@ async def answer_questions(session_id: str, payload: AnswersIn) -> dict:
         session.log("intake", f"Ответ на «{field}» не распознан, уточните", level="warning")
     missing = session.request.missing_fields()
     session.questions = [q for q in session.questions if q.field in missing]
-    session.stage = Stage.CLARIFYING if missing else Stage.CREATED
+    # Непонятый ответ не должен останавливать диалог: вопрос задаётся заново,
+    # но уже с примером допустимого ответа.
+    known = {q.field for q in session.questions}
+    for field in failed:
+        if field not in known:
+            session.questions.append(
+                ClarifyingQuestion(field=field, question=reask_text(field))
+            )
+    session.stage = Stage.CLARIFYING if session.questions or missing else Stage.CREATED
     session.log("intake", f"Ответы приняты. Осталось уточнить: {', '.join(missing) or 'ничего'}")
     store.save(session)
-    return _state(session)
+    record.action(
+        session_id=session.id, device_id=session.device_id, kind="answers",
+        unparsed=failed, missing=missing,
+    )
+    state = _state(session)
+    state["unparsed"] = failed
+    state["reask"] = {field: reask_text(field) for field in failed}
+    return state
 
 
 # --------------------------------------------------------------------------- #

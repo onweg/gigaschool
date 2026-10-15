@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from app.llm.base import LLMProvider, Usage
+from app.pipeline.skeleton import as_dicts
 from app.schemas.ir import (
     LecturePlan,
     Module,
@@ -131,7 +132,7 @@ async def generate_tests(
             continue
         topic, data, usage = result
         usage_total += usage
-        for raw in data.get("questions") or []:
+        for raw in as_dicts(data.get("questions"), key="text"):
             counter += 1
             program.test_questions.append(
                 TestQuestion(
@@ -187,7 +188,7 @@ async def generate_seminars(
             continue
         topic, data, usage = result
         usage_total += usage
-        for raw in data.get("tasks") or []:
+        for raw in as_dicts(data.get("tasks"), key="text"):
             counter += 1
             program.seminar_tasks.append(
                 SeminarTask(
@@ -248,7 +249,7 @@ async def generate_lectures(
                         bullets=[str(b) for b in s.get("bullets") or []],
                         notes=str(s.get("notes", "") or ""),
                     )
-                    for s in data.get("slides") or []
+                    for s in as_dicts(data.get("slides"))
                 ],
             )
         )

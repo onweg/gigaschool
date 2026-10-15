@@ -61,6 +61,34 @@ def contact_only(request: ProgramRequest) -> bool:
     return abs(planned - request.total_hours) < 0.01
 
 
+def as_dict(value: object, *, key: str = "title") -> dict:
+    """Привести значение к словарю.
+
+    Модели регулярно упрощают структуру: вместо {"title": "..."} возвращают
+    просто строку. Падать на этом нельзя — агент обязан доработать то, что
+    пришло, поэтому строка разворачивается в объект с одним полем.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        return {key: value.strip()}
+    return {}
+
+
+def as_dicts(value: object, *, key: str = "title") -> list[dict]:
+    """То же для списка: ["тема А", "тема Б"] → [{"title": "тема А"}, ...].
+
+    Одиночные dict и строка тоже принимаются: модель иногда отдаёт один
+    элемент без списка, и терять его нельзя.
+    """
+    if isinstance(value, (dict, str)):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    out = [as_dict(item, key=key) for item in value]
+    return [item for item in out if item]
+
+
 def _mix_weights(mix: dict, request: ProgramRequest) -> dict[str, float]:
     """Пропорция видов работы. Форма обучения и расписание жёстче мнения модели."""
     if request.no_contact_hours:
@@ -153,7 +181,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
     """Собрать Program из ответа модели, посчитав все часы кодом."""
     total = float(request.total_hours or 0)
     program_type = request.program_type or ProgramType.DPP_PK
-    attestation_raw = data.get("final_attestation") or {}
+    attestation_raw = as_dict(data.get("final_attestation"), key="form")
     grain = 1.0 if float(total).is_integer() and total >= 16 else pick_grain(total)
     attestation_hours = align_to_grain(
         request.attestation_hours or default_attestation_hours(total, program_type),
@@ -184,7 +212,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
             kind=_outcome_kind(o.get("kind")),
             text=str(o.get("text", "")).strip(),
         )
-        for i, o in enumerate(data.get("outcomes") or [])
+        for i, o in enumerate(as_dicts(data.get("outcomes"), key="text"))
     ]
     known_outcomes = {o.id for o in outcomes}
 
@@ -193,7 +221,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         standards = match_prof_standards(
             " ".join([request.direction, request.raw_text, meta.title])
         )
-        for i, c in enumerate(data.get("competencies") or []):
+        for i, c in enumerate(as_dicts(data.get("competencies"))):
             std = standards[0] if standards else None
             competencies.append(
                 Competency(
@@ -209,13 +237,13 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         standards = []
 
     # ----------------------------- часы ---------------------------------- #
-    raw_modules = data.get("modules") or []
+    raw_modules = as_dicts(data.get("modules"))
     module_weights = [float(m.get("weight", 1) or 1) for m in raw_modules]
     module_totals = distribute_modules(total, attestation_hours, module_weights, grain)
 
     modules: list[Module] = []
     for idx, (raw, module_total) in enumerate(zip(raw_modules, module_totals), start=1):
-        mix = _mix_weights(raw.get("mix") or {}, request)
+        mix = _mix_weights(as_dict(raw.get("mix")), request)
         module_hours = split_by_kind(
             module_total,
             lectures=mix["lectures"],
@@ -225,7 +253,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
             min_practice_share=request.min_practice_share,
             grain=grain,
         )
-        raw_topics = raw.get("topics") or [{"title": raw.get("title", ""), "weight": 1}]
+        raw_topics = as_dicts(raw.get("topics")) or [{"title": raw.get("title", ""), "weight": 1}]
         topic_weights = [float(t.get("weight", 1) or 1) for t in raw_topics]
         # Часы тем раскладываются по каждому виду работы отдельно — иначе
         # сумма тем по виду не совпадёт со строкой модуля.
@@ -288,7 +316,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
                 citation=str(s.get("citation", "")).strip(),
                 url=s.get("url") or None,
             )
-            for i, s in enumerate(data.get("sources") or [])
+            for i, s in enumerate(as_dicts(data.get("sources"), key="citation"))
         ],
     )
     _attach_orphan_outcomes(program)

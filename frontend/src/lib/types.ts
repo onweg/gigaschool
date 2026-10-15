@@ -80,4 +80,7 @@ export type SessionState = {
     savings_rub: number;
   };
   error: string;
+  /** Поля, ответ на которые не удалось распознать, и текст переспроса. */
+  unparsed: string[];
+  reask: Record<string, string>;
 };

@@ -66,6 +66,8 @@ export function App() {
   const [references, setReferences] = useState<ParsedReference[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [busyTopic, setBusyTopic] = useState<string | null>(null);
+  /** Действие для кнопки «Повторить» после неудачной сборки. */
+  const [retry, setRetry] = useState<(() => void) | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [section, setSection] = useState<SectionKey>("program");
   const sectionRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
@@ -93,6 +95,11 @@ export function App() {
         const next = await api.state(session.id);
         setSession(next);
         if (next.stage === "ready" || next.stage === "failed") clearInterval(timer);
+        if (next.stage === "failed") {
+          // Фоновая генерация падает молча — сообщаем и даём повторить.
+          say("bot", `Сборка комплекта сорвалась: ${next.error || "неизвестная ошибка"}.`);
+          setRetry(() => () => void approveAndFill());
+        }
       } catch {
         clearInterval(timer);
       }
@@ -185,15 +192,43 @@ export function App() {
     if (!next) return;
     setSession(next);
     setAnswers({});
+
+    // Непонятый ответ не обрывает диалог: агент переспрашивает с примером
+    // и ждёт, пока все параметры не пройдут разбор.
+    if (next.unparsed?.length) {
+      for (const field of next.unparsed) {
+        say("bot", next.reask?.[field] ?? `Не понял ответ на «${field}», уточните.`);
+      }
+      return;
+    }
+    if (next.questions.length) {
+      say("bot", "Остались уточнения — ответьте на них, и я соберу каркас.");
+      return;
+    }
     if (next.missing.length === 0) {
       say("bot", "Спасибо, параметров достаточно. Собираю каркас.");
       await runSkeleton(next.id);
     }
   }
 
-  async function runSkeleton(id: string) {
+  async function runSkeleton(id: string, attempt = 1) {
     const next = await guard("skeleton", () => api.skeleton(id));
-    if (!next) return;
+    // Сбой сборки не обрывает работу: модель иногда отдаёт структуру,
+    // которую не удаётся разобрать, и повтор обычно проходит.
+    if (!next) {
+      if (attempt < 3) {
+        say("bot", `Сборка сорвалась, пробую ещё раз (попытка ${attempt + 1} из 3).`);
+        return runSkeleton(id, attempt + 1);
+      }
+      say(
+        "bot",
+        "Три попытки подряд не удались. Нажмите «Повторить сборку» или уточните запрос — " +
+          "сессия сохранена, ничего не потеряно."
+      );
+      setRetry(() => () => void runSkeleton(id));
+      return;
+    }
+    setRetry(null);
     setSession(next);
     setSection("program");
     const report = next.report_summary;
@@ -518,6 +553,7 @@ export function App() {
         exportUrl={(kind) => api.exportUrl(session?.id ?? "", kind)}
         busy={busy}
         working={working}
+        retry={retry}
         onReset={reset}
       />
     </div>

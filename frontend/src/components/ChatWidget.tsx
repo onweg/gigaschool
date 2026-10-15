@@ -82,6 +82,7 @@ export function ChatWidget({
   exportUrl,
   busy,
   working,
+  retry,
   onReset,
 }: {
   open: boolean;
@@ -102,6 +103,7 @@ export function ChatWidget({
   exportUrl: (kind: string) => string;
   busy: string | null;
   working: boolean;
+  retry: (() => void) | null;
   onReset: () => void;
 }) {
   const logRef = useRef<HTMLDivElement>(null);
@@ -362,6 +364,21 @@ export function ChatWidget({
                   </motion.div>
                 ) : null}
               </AnimatePresence>
+
+              {retry && !working && (
+                <motion.div
+                  className="act-block"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="act-note">
+                    Сессия цела: каркас, ответы и референсы сохранены.
+                  </div>
+                  <button className="btn primary" onClick={retry}>
+                    Повторить сборку
+                  </button>
+                </motion.div>
+              )}
 
               {trace.length > 0 && (
                 <div className="trace">

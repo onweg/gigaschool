@@ -95,7 +95,13 @@ export function Sidebar({
             {active === key && (
               <motion.span
                 layoutId="nav-active"
-                style={{ position: "absolute", inset: 0, borderRadius: 16 }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 16,
+                  // Декоративная подсветка не должна ловить клики.
+                  pointerEvents: "none",
+                }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
             )}

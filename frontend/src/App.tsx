@@ -74,6 +74,17 @@ export function App() {
     api.health().then(setHealth).catch(() => setHealth(null));
   }, []);
 
+  // Открытие по прямой ссылке и кнопка «назад» в браузере.
+  useEffect(() => {
+    const apply = () => {
+      const key = window.location.hash.replace(/^#\/?/, "") as SectionKey;
+      if (key) setSection(key);
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+
   // Пока идёт генерация содержания, подтягиваем состояние: шаги видно сразу.
   useEffect(() => {
     if (!session || session.stage !== "content") return;
@@ -111,6 +122,9 @@ export function App() {
 
   function goto(key: SectionKey) {
     setSection(key);
+    // Адрес в хэше: страницу статистики нужно уметь открыть по прямой ссылке,
+    // а хэш не требует ни роутера, ни настройки сервера.
+    window.location.hash = key === "program" ? "" : `#/${key}`;
     if (key === "stats") {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;

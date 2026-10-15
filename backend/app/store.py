@@ -73,6 +73,7 @@ class Session(BaseModel):
     usage: UsageRecord = Field(default_factory=UsageRecord)
     events: list[Event] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
+    device_id: str = ""
     error: str = ""
     # Сколько секунд заняла каждая фаза и когда начата текущая: методисту важно
     # видеть, что каркас — это минуты, а не часы ручной работы.

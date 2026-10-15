@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import build_provider, get_settings
+from app.llm.metered import MeteredProvider, current_session
+from app.metrics import db, record
+from app.metrics.api import router as metrics_router
 from app.core.hours import rebalance_topics, split_exact
 from app.core.validate import validate_program
 from app.pipeline.content import (
@@ -49,7 +53,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-provider = build_provider()
+#: Метрики снимаются обёрткой вокруг провайдера: пайплайн о них не знает.
+provider = MeteredProvider(build_provider())
+app.include_router(metrics_router)
+
+
+def _device(request: Request) -> str:
+    """Идентификатор устройства: фронт генерирует его один раз и хранит
+    в localStorage, поэтому статистика копится по каждому браузеру отдельно."""
+    return (request.headers.get("x-device-id") or "")[:64]
 
 #: Предел на референс: методист прикладывает программу, а не видеоархив.
 MAX_REFERENCE_BYTES = 25 * 1024 * 1024
@@ -87,6 +99,50 @@ def _session_or_404(session_id: str) -> Session:
     if session is None:
         raise HTTPException(404, f"сессия {session_id} не найдена")
     return session
+
+
+def _usage_snapshot(session: Session) -> tuple[int, tuple[int, int]]:
+    """Счётчики до фазы: разница даст расход именно этой фазы."""
+    u = session.usage
+    return u.calls, (u.prompt_tokens, u.completion_tokens)
+
+
+def _record_run(
+    session: Session,
+    phase: str,
+    started_at: str,
+    duration_s: float,
+    ok: bool,
+    calls_before: int,
+    tokens_before: tuple[int, int],
+    error: str = "",
+) -> None:
+    u = session.usage
+    prompt = u.prompt_tokens - tokens_before[0]
+    completion = u.completion_tokens - tokens_before[1]
+    s = get_settings()
+    # usage.calls считает агрегированные добавления, а не обращения к модели,
+    # поэтому реальное число вызовов берём из журнала за время фазы.
+    counted = db.one(
+        "SELECT COUNT(*) AS n FROM llm_calls WHERE session_id = ? AND ts >= ?",
+        (session.id, started_at),
+    ).get("n") or (u.calls - calls_before)
+    record.run(
+        session_id=session.id,
+        device_id=session.device_id,
+        phase=phase,
+        started_at=started_at,
+        duration_s=duration_s,
+        ok=ok,
+        error=error,
+        llm_calls=counted,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        cost_rub=prompt / 1000 * s.price_prompt_per_1k
+        + completion / 1000 * s.price_completion_per_1k,
+        provider=provider.name,
+        model=provider.model,
+    )
 
 
 def _state(session: Session) -> dict[str, Any]:
@@ -135,8 +191,10 @@ async def skills() -> list[dict]:
 # Шаг 1: запрос и уточняющие вопросы
 # --------------------------------------------------------------------------- #
 @app.post("/api/sessions")
-async def create_session(payload: CreateSessionIn) -> dict:
+async def create_session(payload: CreateSessionIn, request: Request) -> dict:
     session = store.create()
+    session.device_id = _device(request)
+    current_session.set(session.id)
     session.references = payload.references
     session.log("intake", "Разбор запроса методиста")
     try:
@@ -147,6 +205,10 @@ async def create_session(payload: CreateSessionIn) -> dict:
         session.stage = Stage.FAILED
         session.error = str(exc)
         store.save(session)
+        record.action(
+            session_id=session.id, device_id=session.device_id,
+            kind="intake_failed", error=str(exc),
+        )
         raise HTTPException(502, f"модель недоступна: {exc}") from exc
     session.usage.add(usage)
     session.request = intake.request
@@ -160,6 +222,24 @@ async def create_session(payload: CreateSessionIn) -> dict:
         f"{', '.join(session.request.missing_fields()) or 'ничего'}",
     )
     store.save(session)
+    record.session_created(
+        session_id=session.id,
+        device_id=session.device_id,
+        user_agent=request.headers.get("user-agent", ""),
+        request_text=payload.text,
+        program_type=session.request.program_type or "",
+        total_hours=session.request.total_hours,
+        audience=session.request.audience or "",
+        has_references=bool(session.references),
+        questions_asked=len(session.questions),
+        provider=provider.name,
+        model=provider.model,
+    )
+    if session.questions:
+        record.stage(
+            session_id=session.id, device_id=session.device_id, name="clarifying",
+            note=",".join(q.field for q in session.questions),
+        )
     return _state(session)
 
 
@@ -237,8 +317,11 @@ async def make_skeleton(session_id: str) -> dict:
                 "missing": session.request.missing_fields(),
             },
         )
+    current_session.set(session.id)
     async with store.lock(session_id):
         session.start_phase("skeleton")
+        phase_started = db.now()
+        calls_before, tokens_before = _usage_snapshot(session)
         session.log("skeleton", "Сборка каркаса: цель, компетенции, учебный план")
         try:
             program, usage = await build_skeleton(
@@ -247,8 +330,10 @@ async def make_skeleton(session_id: str) -> dict:
         except Exception as exc:  # noqa: BLE001
             session.stage = Stage.FAILED
             session.error = str(exc)
-            session.finish_phase()
+            spent = session.finish_phase()
             store.save(session)
+            _record_run(session, "skeleton", phase_started, spent, False,
+                        calls_before, tokens_before, str(exc))
             raise HTTPException(502, f"не удалось собрать каркас: {exc}") from exc
         session.usage.add(usage)
         session.program = program
@@ -264,6 +349,11 @@ async def make_skeleton(session_id: str) -> dict:
             level="error" if session.report.errors else "info",
         )
         store.save(session)
+        _record_run(session, "skeleton", phase_started, spent, True,
+                    calls_before, tokens_before)
+        record.stage(session_id=session.id, device_id=session.device_id, name="skeleton",
+                     note=f"{len(program.modules)} модулей, {program.grand_total:g} ч")
+        record.findings(session_id=session.id, check_stage="skeleton", report=session.report)
     return _state(session)
 
 
@@ -307,6 +397,10 @@ async def patch_hours(session_id: str, payload: HoursPatchIn) -> dict:
     )
     session.log("skeleton", "Часы пересчитаны после правки методиста")
     store.save(session)
+    record.action(
+        session_id=session.id, device_id=session.device_id, kind="hours_patched",
+        modules=len(payload.module_hours or {}), topics=len(payload.topic_hours or {}),
+    )
     return _state(session)
 
 
@@ -316,6 +410,11 @@ async def approve_skeleton(session_id: str) -> dict:
     if session.program is None:
         raise HTTPException(409, "каркас ещё не собран")
     if session.report and session.report.errors:
+        record.action(
+            session_id=session.id, device_id=session.device_id,
+            kind="approve_blocked",
+            codes=[f.code for f in session.report.errors],
+        )
         raise HTTPException(
             409,
             {
@@ -326,6 +425,7 @@ async def approve_skeleton(session_id: str) -> dict:
     session.stage = Stage.APPROVED
     session.log("skeleton", "Каркас утверждён методистом")
     store.save(session)
+    record.stage(session_id=session.id, device_id=session.device_id, name="approved")
     return _state(session)
 
 
@@ -335,6 +435,9 @@ async def approve_skeleton(session_id: str) -> dict:
 async def _run_content(session: Session, payload: ContentIn) -> None:
     program = session.program
     assert program is not None
+    current_session.set(session.id)
+    phase_started = db.now()
+    calls_before, tokens_before = _usage_snapshot(session)
     try:
         usage = await build_content(
             provider,
@@ -356,11 +459,19 @@ async def _run_content(session: Session, payload: ContentIn) -> None:
             f"Автопроверка: ошибок {len(session.report.errors)}, "
             f"предупреждений {len(session.report.warnings)}",
         )
+        _record_run(session, "content", phase_started, spent, True,
+                    calls_before, tokens_before)
+        record.stage(session_id=session.id, device_id=session.device_id, name="ready")
+        record.findings(session_id=session.id, check_stage="full", report=session.report)
     except Exception as exc:  # noqa: BLE001
         session.stage = Stage.FAILED
         session.error = str(exc)
-        session.finish_phase()
+        spent = session.finish_phase()
         session.log("content", f"Ошибка генерации: {exc}", level="error")
+        _record_run(session, "content", phase_started, spent, False,
+                    calls_before, tokens_before, str(exc))
+        record.stage(session_id=session.id, device_id=session.device_id, name="failed",
+                     note=str(exc)[:200])
     store.save(session)
 
 
@@ -374,6 +485,7 @@ async def make_content(
     session.stage = Stage.CONTENT
     session.start_phase("content")
     session.log("content", "Генерация содержания комплекта")
+    record.stage(session_id=session.id, device_id=session.device_id, name="content")
     store.save(session)
     background.add_task(_run_content, session, payload)
     return _state(session)
@@ -383,6 +495,10 @@ async def make_content(
 async def regenerate_topic(session_id: str, topic_id: str, payload: TopicPatchIn) -> dict:
     """Точечная доработка одной темы без пересборки комплекта."""
     session = _session_or_404(session_id)
+    current_session.set(session.id)
+    phase_started = db.now()
+    started_perf = time.perf_counter()
+    calls_before, tokens_before = _usage_snapshot(session)
     program = session.program
     if program is None:
         raise HTTPException(409, "каркас ещё не собран")
@@ -415,6 +531,15 @@ async def regenerate_topic(session_id: str, topic_id: str, payload: TopicPatchIn
         session.report = validate_program(program, stage="full")
         session.log("patch", f"Тема {topic.code} пересобрана, остальной комплект сохранён")
         store.save(session)
+        _record_run(
+            session, "regenerate", phase_started,
+            time.perf_counter() - started_perf, True, calls_before, tokens_before,
+        )
+        record.action(
+            session_id=session.id, device_id=session.device_id,
+            kind="topic_regenerated", topic=topic.code,
+            instruction=payload.instruction[:200],
+        )
     return _state(session)
 
 
@@ -466,38 +591,48 @@ def _disposition(name: str, ext: str) -> dict[str, str]:
 
 
 
+def _exported(
+    session: Session,
+    request: Request,
+    kind: str,
+    body: bytes | str,
+    media_type: str,
+    slug: str,
+    ext: str,
+) -> Response:
+    """Отдать файл и записать факт выгрузки: это финальный шаг воронки."""
+    payload = body.encode("utf-8") if isinstance(body, str) else body
+    record.export(
+        session_id=session.id,
+        device_id=_device(request) or session.device_id,
+        kind=kind,
+        size=len(payload),
+    )
+    return Response(payload, media_type=media_type, headers=_disposition(slug, ext))
+
+
 @app.get("/api/sessions/{session_id}/export/{kind}")
-async def export(session_id: str, kind: str) -> Response:
+async def export(session_id: str, kind: str, request: Request) -> Response:
     session = _session_or_404(session_id)
     program = session.program
     if program is None:
         raise HTTPException(409, "нечего выгружать: каркас не собран")
     slug = (program.meta.title or "program")[:60].replace("/", "-").strip()
     if kind == "docx":
-        return Response(
-            render_docx(program),
-            media_type=DOCX_MIME,
-            headers=_disposition(slug, "docx"),
-        )
+        return _exported(session, request, "docx", render_docx(program), DOCX_MIME, slug, "docx")
     if kind == "pptx":
         if not program.lecture_plans:
             raise HTTPException(409, "слайды ещё не сгенерированы")
-        return Response(
-            render_pptx(program),
-            media_type=PPTX_MIME,
-            headers=_disposition(slug, "pptx"),
-        )
+        return _exported(session, request, "pptx", render_pptx(program), PPTX_MIME, slug, "pptx")
     if kind == "gift":
-        return Response(
-            render_gift(program),
-            media_type="text/plain; charset=utf-8",
-            headers=_disposition(slug, "gift.txt"),
+        return _exported(
+            session, request, "gift", render_gift(program),
+            "text/plain; charset=utf-8", slug, "gift.txt",
         )
     if kind == "csv":
-        return Response(
-            render_tests_csv(program),
-            media_type="text/csv; charset=utf-8",
-            headers=_disposition(slug, "tests.csv"),
+        return _exported(
+            session, request, "csv", render_tests_csv(program),
+            "text/csv; charset=utf-8", slug, "tests.csv",
         )
     if kind == "json":
         bundle = {
@@ -505,9 +640,9 @@ async def export(session_id: str, kind: str) -> Response:
             "validation": session.report.model_dump(mode="json") if session.report else None,
             "economics": session.economics(),
         }
-        return Response(
+        return _exported(
+            session, request, "json",
             json.dumps(bundle, ensure_ascii=False, indent=2),
-            media_type="application/json; charset=utf-8",
-            headers=_disposition(slug, "json"),
+            "application/json; charset=utf-8", slug, "json",
         )
     raise HTTPException(400, f"неизвестный формат: {kind}")

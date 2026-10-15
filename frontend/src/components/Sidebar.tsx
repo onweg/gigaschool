@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Fragment } from "react";
 import type { Program, SessionState } from "../lib/types";
 
 export type SectionKey =
@@ -7,7 +8,8 @@ export type SectionKey =
   | "plan"
   | "report"
   | "kit"
-  | "exports";
+  | "exports"
+  | "stats";
 
 const ICONS: Record<SectionKey, string> = {
   program: "◆",
@@ -16,6 +18,7 @@ const ICONS: Record<SectionKey, string> = {
   report: "✓",
   kit: "❏",
   exports: "↓",
+  stats: "▦",
 };
 
 const LABELS: Record<SectionKey, string> = {
@@ -25,6 +28,7 @@ const LABELS: Record<SectionKey, string> = {
   report: "Автопроверка",
   kit: "Комплект",
   exports: "Выгрузки",
+  stats: "Статистика",
 };
 
 /** Навигация по разделам собранной программы — она же индикатор готовности. */
@@ -53,6 +57,7 @@ export function Sidebar({
     report: issues ? String(issues) : program ? "0" : "",
     kit: kitCount ? String(kitCount) : "",
     exports: "",
+    stats: "",
   };
 
   const ready: Record<SectionKey, boolean> = {
@@ -62,6 +67,8 @@ export function Sidebar({
     report: Boolean(session?.report),
     kit: kitCount > 0,
     exports: Boolean(program),
+    // Панель телеметрии не зависит от текущей программы: данные копятся всегда.
+    stats: true,
   };
 
   return (
@@ -75,8 +82,9 @@ export function Sidebar({
 
       <nav className="nav">
         {(Object.keys(LABELS) as SectionKey[]).map((key) => (
+          <Fragment key={key}>
+          {key === "stats" && <div className="nav-split" />}
           <button
-            key={key}
             className={`nav-item ${active === key ? "active" : ""}`}
             disabled={!ready[key]}
             onClick={() => onSelect(key)}
@@ -92,6 +100,7 @@ export function Sidebar({
               />
             )}
           </button>
+          </Fragment>
         ))}
       </nav>
 

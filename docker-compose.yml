@@ -8,6 +8,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_AUTH_SCHEME: ${LLM_AUTH_SCHEME:-Api-Key}
+      # Задержка офлайн-демо, мс: иначе прогресс генерации не успевает показаться
+      MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-0}
       PRICE_PROMPT_PER_1K: ${PRICE_PROMPT_PER_1K:-0.20}
       PRICE_COMPLETION_PER_1K: ${PRICE_COMPLETION_PER_1K:-0.60}
       DATA_DIR: /app/data

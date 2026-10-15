@@ -6,6 +6,7 @@ import { Kit } from "./components/Kit";
 import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
+import { Stats } from "./components/Stats";
 import { api, type ParsedReference } from "./lib/api";
 import type { SessionState } from "./lib/types";
 
@@ -110,6 +111,10 @@ export function App() {
 
   function goto(key: SectionKey) {
     setSection(key);
+    if (key === "stats") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -264,7 +269,9 @@ export function App() {
         </div>
 
         <div className="content">
-          {!program ? (
+          {section === "stats" ? (
+            <Stats />
+          ) : !program ? (
             <>
               <h1 className="page-title">Программы обучения</h1>
               <p className="page-lede">

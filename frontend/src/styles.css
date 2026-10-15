@@ -25,6 +25,13 @@
 
   --red: #e5484d;
   --amber: #e2a336;
+  /* Палитра графиков. Проверена scripts/validate_palette.js на подложке
+     #141414: полоса светлоты, цветность, различимость при дальтонизме и
+     контраст — все проверки пройдены. Не подбирать на глаз. */
+  --s1: #56ad38;
+  --s2: #3987e5;
+  --s3: #d95926;
+  --s4: #9085e9;
   --blue: #5b9cf5;
 
   --r-lg: 22px;
@@ -478,3 +485,79 @@ textarea:focus, input:focus { border-color: var(--green); }
   .shimmer { animation: none; color: var(--text-dim); -webkit-text-fill-color: currentColor; }
 }
 .q-time { margin-left: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--green); font-weight: 400; }
+
+/* ======================================================= Панель статистики */
+.stats-head { margin-bottom: 18px; }
+.stats-toolbar { margin-bottom: 22px; }
+
+.tiles {
+  display: grid; gap: 12px; margin-bottom: 22px;
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+}
+.tile { background: var(--surface-2); border-radius: var(--r); padding: 15px 16px; }
+.tile-label { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+.tile-value { font-size: 25px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tile-value.ok { color: var(--green); }
+.tile-value.bad { color: var(--red); }
+.tile-hint { font-size: 11.5px; color: var(--faint); margin-top: 6px; }
+
+.two-col { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 1080px) { .two-col { grid-template-columns: 1fr; } }
+
+.card-lede { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; margin: -4px 0 14px; }
+.card-split { height: 1px; background: var(--line); margin: 14px 0; }
+.nav-split { height: 1px; background: var(--line); margin: 10px 12px; }
+
+/* --------------------------------------------------------- Полосы и оси */
+.bars { display: flex; flex-direction: column; gap: 9px; }
+.bars.tight { gap: 7px; }
+.bar-row { display: grid; grid-template-columns: 148px 1fr 92px; align-items: center; gap: 12px; }
+.bar-label { font-size: 12.5px; color: var(--text-dim); }
+.bar-track { height: 16px; background: var(--surface-3); border-radius: 5px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--s1); border-radius: 5px; }
+.bar-fill.bad { background: var(--red); }
+.bar-value {
+  font-family: var(--font-mono); font-size: 12px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bar-share { color: var(--faint); margin-left: 7px; font-size: 11px; }
+
+.viz-wrap { position: relative; }
+.viz-legend { display: flex; gap: 16px; margin-bottom: 10px; font-size: 12px; color: var(--text-dim); }
+.viz-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+.viz-plot { position: relative; }
+.viz-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.viz-grid { stroke: var(--line); stroke-width: 1; }
+.viz-cross { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.viz-axis { fill: var(--faint); font-size: 10px; font-family: var(--font-mono); }
+.viz-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.viz-dot { stroke: var(--surface-2); stroke-width: 2; }
+.viz-empty { color: var(--faint); font-size: 12.5px; padding: 18px 0; }
+.viz-tip {
+  position: absolute; pointer-events: none; transform: translateX(-50%);
+  background: var(--surface-3); border-radius: 9px; padding: 8px 11px;
+  font-size: 11.5px; font-family: var(--font-mono); line-height: 1.6;
+  color: var(--text-dim); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+.viz-tip .t-head { color: var(--text); font-weight: 600; }
+
+/* ------------------------------------------------- Таблицы и карточка сессии */
+table.tight th, table.tight td { padding: 7px 9px; font-size: 12px; }
+.muted-cell { color: var(--muted); font-size: 11.5px; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--surface-3); }
+
+.drawer-back {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+  display: flex; justify-content: flex-end; z-index: 60; backdrop-filter: blur(2px);
+}
+.drawer {
+  width: min(620px, 94vw); height: 100%; overflow-y: auto;
+  background: var(--surface-2); padding: 22px 24px 40px;
+}
+.drawer h4 { font-size: 12px; color: var(--muted); margin: 20px 0 9px; font-weight: 600; }
+.trace-row {
+  display: flex; gap: 10px; align-items: baseline; padding: 5px 0;
+  border-bottom: 1px solid var(--line); font-size: 12px;
+}
+.trace-row .mono { font-family: var(--font-mono); font-size: 11px; color: var(--faint); white-space: nowrap; }

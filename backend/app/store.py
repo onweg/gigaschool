@@ -74,9 +74,28 @@ class Session(BaseModel):
     events: list[Event] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     error: str = ""
+    # Сколько секунд заняла каждая фаза и когда начата текущая: методисту важно
+    # видеть, что каркас — это минуты, а не часы ручной работы.
+    timings: dict[str, float] = Field(default_factory=dict)
+    phase: str = ""
+    phase_started_at: datetime | None = None
 
     def log(self, stage: str, message: str, level: str = "info") -> None:
         self.events.append(Event(stage=stage, message=message, level=level))
+
+    def start_phase(self, phase: str) -> None:
+        self.phase = phase
+        self.phase_started_at = datetime.now(UTC)
+
+    def finish_phase(self) -> float:
+        """Закрывает текущую фазу и возвращает её длительность в секундах."""
+        if not self.phase or self.phase_started_at is None:
+            return 0.0
+        elapsed = (datetime.now(UTC) - self.phase_started_at).total_seconds()
+        self.timings[self.phase] = round(elapsed, 1)
+        self.phase = ""
+        self.phase_started_at = None
+        return elapsed
 
     def economics(self) -> dict:
         s = get_settings()

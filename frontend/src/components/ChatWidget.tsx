@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ParsedReference } from "../lib/api";
 import type { SessionState } from "../lib/types";
 import { References } from "./References";
-import { Typing } from "./Motion";
+import { formatDuration, StatusLine, Typing } from "./Motion";
 
 export type Message = { role: "user" | "bot" | "sys"; text: string };
 
@@ -23,6 +23,22 @@ const ORDER: SessionState["stage"][] = [
   "content",
   "ready",
 ];
+
+/** Чем агент занят на каркасе: бэкенд отдаёт результат одним ответом,
+ *  поэтому шаги показываем по таймеру — они соответствуют порядку в pipeline. */
+const SKELETON_STEPS = [
+  "Разбираю запрос и подбираю шаблон",
+  "Сверяюсь с нормативкой и профстандартами",
+  "Строю карту компетенций",
+  "Раскладываю модули и темы",
+  "Считаю часы и проверяю суммы",
+];
+
+const BUSY_LABEL: Record<string, string> = {
+  create: "Разбираю запрос",
+  answers: "Учитываю уточнения",
+  approve: "Утверждаю каркас",
+};
 
 const FIELD_LABEL: Record<string, string> = {
   program_type: "Тип программы",
@@ -80,12 +96,43 @@ export function ChatWidget({
 }) {
   const logRef = useRef<HTMLDivElement>(null);
   const position = ORDER.indexOf(session?.stage ?? "created");
+  const [since, setSince] = useState(0);
+  const [tick, setTick] = useState(0);
+
+  // Секундомер стартует в момент, когда агент берётся за работу. Для содержания
+  // точка отсчёта приходит с сервера — переживает перезагрузку страницы.
+  useEffect(() => {
+    if (!working) {
+      setSince(0);
+      setTick(0);
+      return;
+    }
+    const serverStart = session?.phase_started_at
+      ? Date.parse(session.phase_started_at)
+      : NaN;
+    setSince((prev) =>
+      Number.isFinite(serverStart) ? serverStart : prev || Date.now()
+    );
+  }, [working, session?.phase_started_at]);
+
+  useEffect(() => {
+    if (!working) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 2600);
+    return () => clearInterval(timer);
+  }, [working]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, session?.questions.length, working, open]);
 
   const trace = (session?.events ?? []).slice(-4).reverse();
+  const lastEvent = session?.events?.[session.events.length - 1];
+  const statusLabel =
+    session?.stage === "content"
+      ? lastEvent?.message?.split(":")[0] ?? "Собираю содержание"
+      : busy && BUSY_LABEL[busy]
+        ? BUSY_LABEL[busy]
+        : SKELETON_STEPS[tick % SKELETON_STEPS.length];
   // Утверждение каркаса бэкенд отклоняет, пока есть ошибки автопроверки.
   const blocking = (session?.report?.findings ?? []).filter((f) => f.severity === "error");
 
@@ -165,13 +212,13 @@ export function ChatWidget({
                 ))}
               </AnimatePresence>
 
-              {working && (
+              {working && since > 0 && (
                 <motion.div
-                  className="msg bot"
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
                 >
-                  <Typing />
+                  <StatusLine label={statusLabel} since={since} />
                 </motion.div>
               )}
 
@@ -238,7 +285,14 @@ export function ChatWidget({
                     exit={{ opacity: 0, y: -8 }}
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    <div className="q-title">Каркас собран — шаг 3 из 5</div>
+                    <div className="q-title">
+                      Каркас собран — шаг 3 из 5
+                      {session.timings?.skeleton ? (
+                        <span className="q-time">
+                          за {formatDuration(session.timings.skeleton)}
+                        </span>
+                      ) : null}
+                    </div>
                     {blocking.length > 0 ? (
                       <>
                         <div className="act-note">
@@ -277,7 +331,14 @@ export function ChatWidget({
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    <div className="q-title">Комплект готов — забирайте файлы</div>
+                    <div className="q-title">
+                      Комплект готов — забирайте файлы
+                      {session.timings?.content ? (
+                        <span className="q-time">
+                          за {formatDuration(session.timings.content)}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="exports">
                       {exports.map((item) => (
                         <a key={item.kind} href={exportUrl(item.kind)}>

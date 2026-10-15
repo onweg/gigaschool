@@ -100,6 +100,11 @@ def _state(session: Session) -> dict[str, Any]:
         "report": session.report.model_dump(mode="json") if session.report else None,
         "report_summary": session.report.summary() if session.report else None,
         "events": [e.model_dump(mode="json") for e in session.events],
+        "timings": session.timings,
+        "phase": session.phase,
+        "phase_started_at": (
+            session.phase_started_at.isoformat() if session.phase_started_at else None
+        ),
         "economics": session.economics(),
         "error": session.error,
     }
@@ -233,6 +238,7 @@ async def make_skeleton(session_id: str) -> dict:
             },
         )
     async with store.lock(session_id):
+        session.start_phase("skeleton")
         session.log("skeleton", "Сборка каркаса: цель, компетенции, учебный план")
         try:
             program, usage = await build_skeleton(
@@ -241,15 +247,17 @@ async def make_skeleton(session_id: str) -> dict:
         except Exception as exc:  # noqa: BLE001
             session.stage = Stage.FAILED
             session.error = str(exc)
+            session.finish_phase()
             store.save(session)
             raise HTTPException(502, f"не удалось собрать каркас: {exc}") from exc
         session.usage.add(usage)
         session.program = program
         session.report = validate_program(program, stage="skeleton")
         session.stage = Stage.SKELETON
+        spent = session.finish_phase()
         session.log(
             "skeleton",
-            f"Каркас готов: {len(program.modules)} модулей, "
+            f"Каркас готов за {spent:.1f} с: {len(program.modules)} модулей, "
             f"{len(program.all_topics())} тем, {program.grand_total:g} ч. "
             f"Автопроверка: ошибок {len(session.report.errors)}, "
             f"предупреждений {len(session.report.warnings)}",
@@ -338,9 +346,11 @@ async def _run_content(session: Session, payload: ContentIn) -> None:
         session.usage.add(usage)
         session.report = validate_program(program, stage="full")
         session.stage = Stage.READY
+        spent = session.finish_phase()
         session.log(
             "ready",
-            f"Комплект готов: {len(program.test_questions)} тестовых вопросов, "
+            f"Комплект готов за {spent:.0f} с: "
+            f"{len(program.test_questions)} тестовых вопросов, "
             f"{len(program.seminar_tasks)} заданий, "
             f"{sum(len(p.slides) for p in program.lecture_plans)} слайдов. "
             f"Автопроверка: ошибок {len(session.report.errors)}, "
@@ -349,6 +359,7 @@ async def _run_content(session: Session, payload: ContentIn) -> None:
     except Exception as exc:  # noqa: BLE001
         session.stage = Stage.FAILED
         session.error = str(exc)
+        session.finish_phase()
         session.log("content", f"Ошибка генерации: {exc}", level="error")
     store.save(session)
 
@@ -361,6 +372,7 @@ async def make_content(
     if session.stage not in (Stage.APPROVED, Stage.READY):
         raise HTTPException(409, "сначала утвердите каркас")
     session.stage = Stage.CONTENT
+    session.start_phase("content")
     session.log("content", "Генерация содержания комплекта")
     store.save(session)
     background.add_task(_run_content, session, payload)

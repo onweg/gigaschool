@@ -1,4 +1,5 @@
 import {
+  AnimatePresence,
   animate,
   motion,
   useInView,
@@ -6,7 +7,7 @@ import {
   useReducedMotion,
   useTransform,
 } from "framer-motion";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** Мягкая пружина — одна на весь интерфейс, чтобы движение было узнаваемым. */
 export const SPRING = { type: "spring", stiffness: 260, damping: 30, mass: 0.9 } as const;
@@ -83,6 +84,60 @@ export function Typing() {
           transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.16, ease: "easeInOut" }}
         />
       ))}
+    </div>
+  );
+}
+
+/** Человекочитаемая длительность: «4,2 с», «1 мин 12 с». */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) {
+    const value = seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds));
+    return `${value.replace(".", ",")} с`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return rest ? `${minutes} мин ${rest} с` : `${minutes} мин`;
+}
+
+/** Секундомер, который тикает, пока агент работает. */
+export function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, [since]);
+  return <>{formatDuration(Math.max(0, (now - since) / 1000))}</>;
+}
+
+/**
+ * Строка статуса генерации: подпись «переливается» слева направо,
+ * рядом тикает секундомер — методист видит, что агент не завис.
+ */
+export function StatusLine({ label, since }: { label: string; since: number }) {
+  const reduced = useReducedMotion();
+  return (
+    <div className="statusline">
+      <motion.span
+        className="sl-mark"
+        animate={reduced ? {} : { rotate: 360 }}
+        transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
+      />
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={label}
+          className={`sl-label ${reduced ? "" : "shimmer"}`}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.28 }}
+        >
+          {label}
+        </motion.span>
+      </AnimatePresence>
+      <span className="sl-time">
+        <Elapsed since={since} />
+      </span>
     </div>
   );
 }

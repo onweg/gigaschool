@@ -13,6 +13,9 @@ class Settings(BaseModel):
     llm_base_url: str = os.getenv("LLM_BASE_URL", "https://llm.api.cloud.yandex.net/v1")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
+    # Задержка mock-ответа, мс: офлайн-демо иначе отрабатывает мгновенно
+    # и прогресс генерации не успевает показаться.
+    mock_latency_ms: int = int(os.getenv("MOCK_LATENCY_MS", "0"))
     llm_auth_scheme: str = os.getenv("LLM_AUTH_SCHEME", "Api-Key")
     llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "180"))
     llm_json_mode: bool = os.getenv("LLM_JSON_MODE", "1") == "1"

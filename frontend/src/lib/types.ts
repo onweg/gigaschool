@@ -69,6 +69,9 @@ export type SessionState = {
   report: { findings: Finding[] } | null;
   report_summary: { ok: boolean; errors: number; warnings: number; checks: number } | null;
   events: { at: string; stage: string; message: string; level: string }[];
+  timings: Record<string, number>;
+  phase: string;
+  phase_started_at: string | null;
   economics: {
     tokens: number;
     llm_calls: number;

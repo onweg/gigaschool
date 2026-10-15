@@ -6,9 +6,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
+from app.config import get_settings
 from app.llm.base import Completion, LLMProvider, Usage
 
 _SKILL = re.compile(r"SKILL:([a-z_]+)")
@@ -27,6 +29,9 @@ class MockProvider(LLMProvider):
         max_tokens: int = 4000,
         json_mode: bool = False,
     ) -> Completion:
+        latency = get_settings().mock_latency_ms
+        if latency:
+            await asyncio.sleep(latency / 1000)
         match = _SKILL.search(system)
         skill = match.group(1) if match else "unknown"
         payload = _DISPATCH.get(skill, lambda _: {"error": f"mock: нет заготовки для {skill}"})(user)

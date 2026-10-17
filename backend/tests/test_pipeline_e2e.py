@@ -100,7 +100,9 @@ async def test_request_4_asks_questions_before_building(provider: MockProvider) 
 async def test_request_5_internship_without_contact_hours(provider: MockProvider) -> None:
     intake, _ = await run_intake(provider, REQUEST_5)
     request = intake.request
-    request.no_contact_hours = True  # в запросе сказано прямо
+    # Флаг не выставляется руками: «аудиторных занятий нет» обязан распознаться
+    # из текста запроса, иначе часы разъедутся по видам работы.
+    assert request.no_contact_hours, "признак «без аудиторных занятий» не извлечён из запроса"
     request.attestation_hours = 2
     apply_answers(
         request,

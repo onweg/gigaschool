@@ -42,6 +42,15 @@ _SESSIONS = re.compile(
     rf"по\s*{_NUM}\s*час\w*\s*{_NUM}\s*раз\w*\s*в\s*недел", re.IGNORECASE
 )
 _MONTHS = re.compile(r"(\d+)\s*месяц", re.IGNORECASE)
+#: «Аудиторных занятий нет» — это не мнение, а структура часов, поэтому ловим
+#: текстом, а не доверяем модели: от флага зависит всё распределение по видам
+#: работы (стажировка из кейса — 256 ч целиком самостоятельной работы).
+_NO_CONTACT = re.compile(
+    r"аудиторн\w*(?:\s+\w+){0,2}\s*(?:нет|не\s+предусмотрен\w*|отсутству\w*)"
+    r"|без\s+аудиторн\w*"
+    r"|(?:вся|все|всё)\s+(?:работа\s+)?самостоятельн\w*",
+    re.IGNORECASE,
+)
 
 
 def _as_number(token: str) -> int:
@@ -71,6 +80,8 @@ def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
         request.days = request.weeks * 7
     if "не меньше половины" in text.lower() and "практик" in text.lower():
         request.min_practice_share = 0.5
+    if _NO_CONTACT.search(text):
+        request.no_contact_hours = True
 
 
 async def run_intake(

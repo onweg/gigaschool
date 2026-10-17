@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.config import build_provider, get_settings
@@ -829,3 +832,15 @@ async def export(session_id: str, kind: str, request: Request) -> Response:
             "application/json; charset=utf-8", slug, "json",
         )
     raise HTTPException(400, f"неизвестный формат: {kind}")
+
+
+# --------------------------------------------------------------------------- #
+# Статика фронта
+# --------------------------------------------------------------------------- #
+# Среда хакатона ждёт одно приложение на 0.0.0.0:8000, и docker там может быть
+# недоступен. Если рядом лежит собранный фронт, отдаём его этим же процессом —
+# тогда `uvicorn app.main:app --host 0.0.0.0 --port 8000` поднимает сразу сайт
+# и API. Монтируется последним, чтобы не перехватывать /api/*.
+_static = Path(os.getenv("STATIC_DIR", Path(__file__).resolve().parents[2] / "frontend" / "dist"))
+if (_static / "index.html").exists():
+    app.mount("/", StaticFiles(directory=_static, html=True), name="frontend")

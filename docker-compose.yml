@@ -2,12 +2,17 @@ services:
   backend:
     build: ./backend
     environment:
-      # mock — офлайн-демо без обращения к модели; openai_compat — реальная модель
-      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://llm.api.cloud.yandex.net/v1}
+      # Пусто — провайдер выбирается сам: есть ключ и модель → живая модель,
+      # иначе офлайн-заглушка. mock — принудительно без обращения к модели.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      # Среда хакатона кладёт доступы в OPENAI_*; config.py примет оба написания
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       LLM_MODEL: ${LLM_MODEL:-}
-      LLM_AUTH_SCHEME: ${LLM_AUTH_SCHEME:-Api-Key}
+      LLM_AUTH_SCHEME: ${LLM_AUTH_SCHEME:-}
       # Задержка офлайн-демо, мс: иначе прогресс генерации не успевает показаться
       MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-0}
       PRICE_PROMPT_PER_1K: ${PRICE_PROMPT_PER_1K:-0.20}

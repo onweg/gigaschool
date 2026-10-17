@@ -25,7 +25,7 @@
 ```bash
 # офлайн-демо, без ключей и без обращения к модели
 docker compose up --build
-# http://localhost:3000 — интерфейс, http://localhost:8000/docs — API
+# http://localhost:8000 — интерфейс (порт меняется переменной WEB_PORT)
 ```
 
 С реальной моделью:
@@ -104,9 +104,24 @@ backend/app/
   render/              .docx по шаблонам АЦР, .pptx, GIFT/CSV
   main.py              HTTP API
 frontend/              React + framer-motion: чат, живая сборка, отчёт проверки
-reference/acr/         образцы программ АЦР и открытые запросы кейса
+data/acr/              образцы программ АЦР и открытые запросы кейса (данные кейса)
+notebooks/             разовые разборы (решение не ноутбучное)
+logs/                  логи запуска на сервере
 docs/                  задача кейса и архитектура
 ```
+
+## Комплект одной командой, без браузера
+
+```bash
+cd backend && LLM_PROVIDER=mock python3 scripts/generate.py \
+    --type pk --hours 72 --title "Анализ данных на Python" \
+    --audience "сотрудники банков" --out ../out
+```
+
+Тот же пайплайн, что за HTTP: каркас → содержание → автопроверка → рендеры.
+Кладёт в `out/` program.docx, program.json, tests.gift, tests.csv, slides.pptx
+и печатает отчёт проверки. `--type obsh` — вторая форма программы,
+`--help` — остальные параметры. Код возврата 1, если проверка нашла ошибки.
 
 ## Тесты
 

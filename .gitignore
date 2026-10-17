@@ -7,3 +7,12 @@ dist/
 .env
 backend/data/*.json
 .DS_Store
+
+# логи и накопленная телеметрия не едут в git — у сервера своя база
+logs/*
+!logs/README.md
+backend/data/metrics.sqlite3*
+
+# комплекты, собранные scripts/generate.py
+out/
+backend/out/

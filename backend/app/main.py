@@ -85,6 +85,21 @@ class ContentIn(BaseModel):
     slides_modules: list[int] | None = None
 
 
+class GenerateIn(BaseModel):
+    """Единый вход для машинного прогона: запрос целиком одним вызовом.
+
+    Либо `text` на первом обращении, либо `session_id` + `answers` — чтобы
+    дослать ответы на уточняющие вопросы и довести ту же сессию до комплекта.
+    """
+
+    text: str = ""
+    session_id: str | None = None
+    answers: dict[str, str] = {}
+    references: list[str] = []
+    test_total: int | None = None
+    slides_modules: list[int] | None = None
+
+
 class TopicPatchIn(BaseModel):
     instruction: str = ""
     regenerate_tests: bool = True
@@ -627,6 +642,156 @@ def _exported(
         size=len(payload),
     )
     return Response(payload, media_type=media_type, headers=_disposition(slug, ext))
+
+
+# --------------------------------------------------------------------------- #
+# Единый вход для машинной проверки
+# --------------------------------------------------------------------------- #
+@app.post("/api/generate")
+async def generate(payload: GenerateIn, request: Request) -> dict:
+    """Весь путь одним вызовом: запрос → каркас → содержание → автопроверка.
+
+    Кейс требует единого эндпоинта для прогона на наборе тестовых запросов и
+    одновременно требует уточняющих вопросов, когда в запросе не хватает данных.
+    Поэтому адрес один, а поведений два:
+
+    * данных не хватает → `status: "need_answers"` + `session_id` и вопросы;
+      вызывающий отвечает вторым обращением с этим `session_id` и `answers`;
+    * данных хватает → `status: "ready"`, комплект и ссылки на выгрузки.
+
+    Шаг утверждения каркаса человеком здесь проходится автоматически, о чём
+    честно сказано в ответе полем `skeleton_auto_approved`. Интерфейс методиста
+    по-прежнему идёт через /api/sessions/* и спрашивает разрешение у человека.
+    """
+    if payload.session_id:
+        session = _session_or_404(payload.session_id)
+        if payload.answers:
+            unparsed = apply_answers(session.request, payload.answers)
+            if unparsed:
+                return {
+                    "status": "need_answers",
+                    "session_id": session.id,
+                    "unparsed": unparsed,
+                    "questions": [
+                        {"field": f, "question": reask_text(f)} for f in unparsed
+                    ],
+                }
+    elif payload.text.strip():
+        session = store.create()
+        session.device_id = _device(request)
+        current_session.set(session.id)
+        session.references = payload.references
+        try:
+            intake, usage = await run_intake(
+                provider, payload.text, references=session.references
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"модель недоступна: {exc}") from exc
+        session.usage.add(usage)
+        session.request = intake.request
+        session.questions = intake.questions
+        record.session_created(
+            session_id=session.id,
+            device_id=session.device_id,
+            user_agent=request.headers.get("user-agent", ""),
+            request_text=payload.text,
+            program_type=session.request.program_type or "",
+            total_hours=session.request.total_hours,
+            audience=session.request.audience or "",
+            has_references=bool(session.references),
+            questions_asked=len(session.questions),
+            provider=provider.name,
+            model=provider.model,
+        )
+        if payload.answers:
+            apply_answers(session.request, payload.answers)
+    else:
+        raise HTTPException(400, "нужен text для нового запроса или session_id для продолжения")
+
+    missing = session.request.missing_fields()
+    if missing:
+        questions = {q.field: q.question for q in session.questions}
+        session.stage = Stage.CLARIFYING
+        store.save(session)
+        return {
+            "status": "need_answers",
+            "session_id": session.id,
+            "missing": missing,
+            "questions": [
+                {"field": f, "question": questions.get(f) or reask_text(f)} for f in missing
+            ],
+        }
+
+    current_session.set(session.id)
+    async with store.lock(session.id):
+        session.start_phase("skeleton")
+        phase_started = db.now()
+        calls_before, tokens_before = _usage_snapshot(session)
+        try:
+            program, usage = await build_skeleton(
+                provider, session.request, references=session.references
+            )
+        except Exception as exc:  # noqa: BLE001
+            session.stage = Stage.FAILED
+            session.error = str(exc)
+            spent = session.finish_phase()
+            store.save(session)
+            _record_run(session, "skeleton", phase_started, spent, False,
+                        calls_before, tokens_before, str(exc))
+            raise HTTPException(502, f"не удалось собрать каркас: {exc}") from exc
+        session.usage.add(usage)
+        session.program = program
+        session.report = validate_program(program, stage="skeleton")
+        skeleton_errors = [f.code for f in session.report.errors]
+        spent = session.finish_phase()
+        session.stage = Stage.APPROVED
+        session.log(
+            "skeleton",
+            f"Каркас собран за {spent:.1f} с и утверждён автоматически "
+            f"(машинный прогон): {len(program.modules)} модулей, {program.grand_total:g} ч",
+        )
+        store.save(session)
+        _record_run(session, "skeleton", phase_started, spent, True,
+                    calls_before, tokens_before)
+        record.stage(session_id=session.id, device_id=session.device_id, name="skeleton",
+                     note=f"{len(program.modules)} модулей, {program.grand_total:g} ч")
+        record.findings(session_id=session.id, check_stage="skeleton", report=session.report)
+
+        session.start_phase("content")
+        await _run_content(
+            session,
+            ContentIn(test_total=payload.test_total, slides_modules=payload.slides_modules),
+        )
+
+    if session.stage is Stage.FAILED:
+        raise HTTPException(502, f"не удалось собрать содержание: {session.error}")
+
+    base = f"/api/sessions/{session.id}/export"
+    state = _state(session)
+    return {
+        "status": "ready",
+        "session_id": session.id,
+        "skeleton_auto_approved": True,
+        "skeleton_errors": skeleton_errors,
+        "program": session.program.model_dump(mode="json"),
+        "report": session.report.model_dump(mode="json") if session.report else None,
+        # errors/warnings в ValidationReport — вычисляемые, в JSON их нет.
+        # Прогону нужен однозначный вердикт, поэтому отдаём сводку отдельно.
+        "summary": {
+            "ok": bool(session.report and session.report.ok),
+            "errors": [f.code for f in session.report.errors] if session.report else [],
+            "warnings": [f.code for f in session.report.warnings] if session.report else [],
+            "total_hours": session.program.grand_total,
+            "modules": len(session.program.modules),
+            "topics": len(session.program.all_topics()),
+            "test_questions": len(session.program.test_questions),
+            "seminar_tasks": len(session.program.seminar_tasks),
+            "slides": sum(len(p.slides) for p in session.program.lecture_plans),
+        },
+        "economics": session.economics(),
+        "timings": state.get("timings", {}),
+        "exports": {kind: f"{base}/{kind}" for kind in ("docx", "pptx", "gift", "csv", "json")},
+    }
 
 
 @app.get("/api/sessions/{session_id}/export/{kind}")

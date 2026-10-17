@@ -123,6 +123,56 @@ cd backend && LLM_PROVIDER=mock python3 scripts/generate.py \
 и печатает отчёт проверки. `--type obsh` — вторая форма программы,
 `--help` — остальные параметры. Код возврата 1, если проверка нашла ошибки.
 
+## API для машинной проверки
+
+Единый эндпоинт: один вызов, если данных в запросе хватает, и уточняющие
+вопросы, если нет. Шаг утверждения каркаса человеком здесь проходится
+автоматически, о чём сказано в ответе полем `skeleton_auto_approved`;
+интерфейс методиста по-прежнему спрашивает разрешение.
+
+```bash
+# данных хватает — комплект сразу
+curl -s -X POST http://localhost:8000/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "программа повышения квалификации на 72 часа по анализу данных на Python для сотрудников банков, очно-заочно, защита проекта"}'
+```
+
+```jsonc
+{
+  "status": "ready",
+  "session_id": "9281aaa02122",
+  "skeleton_auto_approved": true,
+  "program": { /* весь комплект */ },
+  "report": { "findings": [ /* автопроверка */ ] },
+  "summary": { "ok": true, "errors": [], "total_hours": 72, "test_questions": 12 },
+  "exports": { "docx": "/api/sessions/9281aaa02122/export/docx", "pptx": "…" }
+}
+```
+
+Если в запросе не хватает данных, приходит `status: "need_answers"` со списком
+вопросов — ответы досылаются вторым вызовом на тот же адрес:
+
+```bash
+curl -s -X POST http://localhost:8000/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id": "…", "answers": {"program_type": "повышение квалификации", "total_hours": "72"}}'
+```
+
+Непонятый ответ прогон не обрывает: вопрос возвращается с примером допустимого
+ответа. Поля запроса: `text`, `session_id`, `answers`, `references`,
+`test_total`, `slides_modules`.
+
+## Прогон по открытым запросам кейса
+
+```bash
+cd backend && LLM_PROVIDER=mock python3 scripts/run_open_requests.py
+```
+
+Пять запросов из `data/acr/case-open-requests.docx` с эталонными чек-листами:
+выбор шаблона, суммы часов, доля практики, график, число тестовых вопросов,
+покрытие каждого РО двумя оценочными средствами, пустые реквизиты приказа.
+`--only 4` — один запрос. Код возврата 1 при любом провале.
+
 ## Тесты
 
 ```bash

@@ -16,3 +16,6 @@ backend/data/metrics.sqlite3*
 # комплекты, собранные scripts/generate.py
 out/
 backend/out/
+
+# временные файлы Word
+~$*

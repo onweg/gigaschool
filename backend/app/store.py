@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
+import tempfile
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
@@ -114,7 +117,21 @@ class Session(BaseModel):
         }
 
 
+#: Идентификатор сессии — ровно то, что выдаёт `uuid4().hex[:12]`.
+#: Он приходит из URL и подставляется в имя файла, поэтому форма проверяется:
+#: иначе `../../etc/passwd` уводит чтение и запись за пределы каталога данных.
+_SESSION_ID = re.compile(r"^[0-9a-f]{12}$")
+
+
 class SessionStore:
+    """Сессии в памяти с зеркалом на диске.
+
+    Диск нужен, чтобы перезапуск сервиса не терял работу методиста. Запись
+    атомарная: сначала во временный файл рядом, затем переименование — оно
+    неделимо на уровне файловой системы, и оборванная запись не оставляет
+    наполовину сохранённую программу.
+    """
+
     def __init__(self, data_dir: str | None = None) -> None:
         self._sessions: dict[str, Session] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -136,18 +153,45 @@ class SessionStore:
     def lock(self, session_id: str) -> asyncio.Lock:
         return self._locks.setdefault(session_id, asyncio.Lock())
 
+    def _path(self, session_id: str) -> Path | None:
+        """Путь к файлу сессии или None, если идентификатор не наш."""
+        if not _SESSION_ID.match(session_id):
+            return None
+        return self._dir / f"{session_id}.json"
+
     def save(self, session: Session) -> None:
         self._sessions[session.id] = session
-        path = self._dir / f"{session.id}.json"
-        path.write_text(
-            session.model_dump_json(indent=2, exclude_none=False), encoding="utf-8"
+        path = self._path(session.id)
+        if path is None:
+            return
+        data = session.model_dump_json(indent=2, exclude_none=False)
+        # Временный файл создаём в том же каталоге: переименование атомарно
+        # только внутри одной файловой системы.
+        handle, tmp_name = tempfile.mkstemp(
+            dir=self._dir, prefix=f".{session.id}.", suffix=".tmp"
         )
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as fp:
+                fp.write(data)
+                fp.flush()
+                os.fsync(fp.fileno())
+            os.replace(tmp, path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def _load(self, session_id: str) -> Session | None:
-        path = self._dir / f"{session_id}.json"
-        if not path.exists():
+        path = self._path(session_id)
+        if path is None or not path.exists():
             return None
-        session = Session(**json.loads(path.read_text(encoding="utf-8")))
+        try:
+            session = Session(**json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            # Файл повреждён — ведём себя как при отсутствующей сессии.
+            # Падать с 500 на чужом битом файле незачем, а сам файл оставляем:
+            # он может пригодиться для разбора.
+            return None
         self._sessions[session_id] = session
         return session
 

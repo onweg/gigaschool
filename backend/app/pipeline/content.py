@@ -61,8 +61,15 @@ async def _bounded(tasks: list[Awaitable], limit: int = MAX_PARALLEL) -> list:
 # Содержание тем
 # --------------------------------------------------------------------------- #
 async def fill_topic_content(
-    provider: LLMProvider, program: Program, module: Module, topic: Topic
+    provider: LLMProvider,
+    program: Program,
+    module: Module,
+    topic: Topic,
+    *,
+    instruction: str = "",
 ) -> Usage:
+    """Содержание одной темы. `instruction` — пожелание методиста при
+    точечной доработке («усложни», «добавь SQL», «меньше теории»)."""
     skill = load_skill("topic_content")
     data, usage = await provider.complete_json(
         system=skill.system,
@@ -81,6 +88,9 @@ async def fill_topic_content(
             self_study=f"{topic.hours.self_study:g}",
             outcomes_block=_outcomes_block(program, topic),
             siblings_block=_siblings_block(module, topic),
+            instruction_block=(
+                f"Пожелание методиста к этой теме: {instruction}" if instruction else ""
+            ),
         ),
         max_tokens=2000,
     )
@@ -99,6 +109,7 @@ async def generate_tests(
     *,
     per_topic: int = QUESTIONS_PER_TOPIC,
     total: int | None = None,
+    instruction: str = "",
 ) -> Usage:
     """Тестовые вопросы с привязкой к РО.
 
@@ -123,6 +134,9 @@ async def generate_tests(
                 topic_content=topic.content or topic.title,
                 outcomes_block=_outcomes_block(program, topic),
                 count=count,
+                instruction_block=(
+                    f"Пожелание методиста: {instruction}" if instruction else ""
+                ),
             ),
             max_tokens=2500,
         )
@@ -198,6 +212,7 @@ async def _top_up_questions(
                     topic_content=topic.content or topic.title,
                     outcomes_block=_outcomes_block(program, topic),
                     count=count,
+                    instruction_block="",
                 ),
                 max_tokens=2500,
             )
@@ -230,7 +245,12 @@ async def _top_up_questions(
 # Семинары
 # --------------------------------------------------------------------------- #
 async def generate_seminars(
-    provider: LLMProvider, program: Program, topics: list[Topic], *, per_topic: int = 1
+    provider: LLMProvider,
+    program: Program,
+    topics: list[Topic],
+    *,
+    per_topic: int = 1,
+    instruction: str = "",
 ) -> Usage:
     skill = load_skill("seminars")
 
@@ -246,6 +266,9 @@ async def generate_seminars(
                 practice_hours=f"{topic.hours.practice + topic.hours.labs:g}",
                 outcomes_block=_outcomes_block(program, topic),
                 count=per_topic,
+                instruction_block=(
+                    f"Пожелание методиста: {instruction}" if instruction else ""
+                ),
             ),
             max_tokens=2500,
         )

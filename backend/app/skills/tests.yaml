@@ -24,3 +24,4 @@ user_template: |
   Результаты обучения, которые нужно проверить:
   {outcomes_block}
   Сколько вопросов: {count}
+  {instruction_block}

@@ -104,7 +104,11 @@ class GenerateIn(BaseModel):
 
 
 class TopicPatchIn(BaseModel):
+    """Точечная доработка темы. `instruction` — пожелание методиста обычным
+    текстом: «усложни тест», «меньше теории», «добавь примеры из банков»."""
+
     instruction: str = ""
+    title: str = ""  # новое название темы, если методист его меняет
     regenerate_tests: bool = True
 
 
@@ -544,21 +548,31 @@ async def regenerate_topic(session_id: str, topic_id: str, payload: TopicPatchIn
     if target is None:
         raise HTTPException(404, f"тема {topic_id} не найдена")
     module, topic = target
-    if payload.instruction:
-        topic.title = topic.title  # заголовок меняет методист, инструкция идёт в промпт
-        program.meta.direction = program.meta.direction
+    # Методист может заодно переименовать тему: «замени тему 2.3 на SQL-окна».
+    if payload.title:
+        topic.title = payload.title.strip()
     async with store.lock(session_id):
-        usage = await fill_topic_content(provider, program, module, topic)
+        usage = await fill_topic_content(
+            provider, program, module, topic, instruction=payload.instruction
+        )
         session.usage.add(usage)
         if payload.regenerate_tests:
             program.test_questions = [
                 q for q in program.test_questions if q.topic_id != topic.id
             ]
-            session.usage.add(await generate_tests(provider, program, [topic]))
+            session.usage.add(
+                await generate_tests(
+                    provider, program, [topic], instruction=payload.instruction
+                )
+            )
             program.seminar_tasks = [
                 s for s in program.seminar_tasks if s.topic_id != topic.id
             ]
-            session.usage.add(await generate_seminars(provider, program, [topic]))
+            session.usage.add(
+                await generate_seminars(
+                    provider, program, [topic], instruction=payload.instruction
+                )
+            )
         if any(p.topic_id == topic.id for p in program.lecture_plans):
             program.lecture_plans = [
                 p for p in program.lecture_plans if p.topic_id != topic.id

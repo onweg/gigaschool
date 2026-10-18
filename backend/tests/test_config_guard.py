@@ -152,3 +152,41 @@ def test_mock_does_not_guess_the_request() -> None:
     assert first == second, "ответ заглушки не должен зависеть от текста запроса"
     assert "program_type" not in first
     assert "total_hours" not in first
+
+
+def test_startup_report_hides_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Журнал запуска читают и пересылают — ключ печатается обрезанным."""
+    from app.config import describe_config
+
+    monkeypatch.setenv("OPENAI_API_KEY", "AQVNsecret0123456789")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    get_settings.cache_clear()
+
+    report = "\n".join(describe_config())
+
+    assert "AQVNsecret0123456789" not in report
+    assert "AQVN" in report, "по началу ключа видно, тот ли он"
+    assert "foundation-models.api.cloud.ru" in report
+    assert "GigaChat" in report
+
+
+def test_warning_when_host_check_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Снятое ограничение не должно потеряться: с ним нельзя идти в сдачу."""
+    from app.config import check_config
+
+    monkeypatch.setenv("LLM_ALLOW_ANY_HOST", "1")
+    get_settings.cache_clear()
+
+    assert any("LLM_ALLOW_ANY_HOST" in w for w in check_config())
+
+
+def test_no_warnings_in_a_clean_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import check_config
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    get_settings.cache_clear()
+
+    assert check_config() == []

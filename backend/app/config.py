@@ -159,3 +159,51 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             "содержание — уберите LLM_PROVIDER или ключ, смотря что вы хотели."
         )
     return MockProvider()
+
+
+def describe_config() -> list[str]:
+    """Строки для журнала запуска: с чем именно поднялся сервис.
+
+    Нужны, чтобы режим работы был виден сразу, а не выяснялся по текстам
+    программ. Ключ печатается обрезанным: журналы читают и пересылают.
+    """
+    s = get_settings()
+    key = s.llm_api_key
+    masked = f"{key[:4]}…{key[-3:]}" if len(key) > 10 else ("задан" if key else "нет")
+    lines = [
+        f"провайдер:      {s.llm_provider or 'выбран по ключу'}",
+        f"адрес модели:   {s.llm_base_url or '—'}",
+        f"модель:         {s.llm_model or '—'}",
+        f"ключ:           {masked}",
+        f"одновременно:   {s.llm_max_parallel} запрос(ов)",
+        f"кэш ответов:    {'включён' if s.llm_cache else 'выключен'}",
+        f"данные:         {Path(s.data_dir).resolve()}",
+    ]
+    if s.llm_allow_any_host:
+        lines.append("ВНИМАНИЕ:       LLM_ALLOW_ANY_HOST=1 — проверка адреса модели снята")
+    return lines
+
+
+def check_config() -> list[str]:
+    """Предупреждения, которые не мешают работе, но о них надо знать."""
+    s = get_settings()
+    warnings: list[str] = []
+    data = Path(s.data_dir)
+    try:
+        data.mkdir(parents=True, exist_ok=True)
+        probe = data / ".write-test"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        warnings.append(f"каталог данных {data} недоступен для записи: {exc}")
+    if s.llm_allow_any_host:
+        warnings.append(
+            "снято ограничение на адрес модели (LLM_ALLOW_ANY_HOST=1). "
+            "Кейс допускает только Cloud.ru — для сдачи флаг нужно убрать"
+        )
+    if s.llm_max_parallel > 4:
+        warnings.append(
+            f"LLM_MAX_PARALLEL={s.llm_max_parallel}: шлюз площадки отвечает 429 "
+            f"уже на трёх одновременных запросах"
+        )
+    return warnings

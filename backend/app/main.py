@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.config import build_provider, get_settings
+from app.config import ConfigError, build_provider, check_config, describe_config, get_settings
 from app.llm.metered import MeteredProvider, current_session
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
@@ -57,8 +58,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Конфигурацию проверяем при старте, а не при первом запросе: иначе ошибка
+# всплывает посреди демонстрации, да ещё и стеком вызовов вместо объяснения.
+try:
+    _base_provider = build_provider()
+except ConfigError as exc:
+    print("\n  Не удалось запустить агента.\n", file=sys.stderr)
+    print(f"  {exc}\n", file=sys.stderr)
+    print("  Проверьте .env или переменные окружения и запустите снова.\n", file=sys.stderr)
+    raise SystemExit(2) from None
+
+print("Агент образовательных программ АЦР", file=sys.stderr)
+for _line in describe_config():
+    print(f"  {_line}", file=sys.stderr)
+for _warning in check_config():
+    print(f"  ! {_warning}", file=sys.stderr)
+if _base_provider.name.startswith("mock"):
+    print(
+        "  ! офлайн-заглушка: структура и часы настоящие, содержание — болванки",
+        file=sys.stderr,
+    )
+print("", file=sys.stderr)
+
 #: Метрики снимаются обёрткой вокруг провайдера: пайплайн о них не знает.
-provider = MeteredProvider(build_provider())
+provider = MeteredProvider(_base_provider)
 app.include_router(metrics_router)
 
 

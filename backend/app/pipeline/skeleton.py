@@ -246,6 +246,12 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
     # практикой не считается. Поэтому долю пересчитываем на часы модулей,
     # иначе на 16 ч выходит 7 ч вместо требуемых 8.
     module_share = request.min_practice_share
+    # «Аудиторных занятий нет» и «доля практики не меньше половины» —
+    # взаимоисключающие требования: практика это контактная работа. Структура
+    # часов важнее пожелания о доле, иначе солвер перегонит всю самостоятельную
+    # работу стажировки в практические занятия, которых не существует.
+    if request.no_contact_hours:
+        module_share = None
     if module_share is not None:
         modules_total = sum(module_totals)
         module_share = min(1.0, total * module_share / modules_total) if modules_total else None

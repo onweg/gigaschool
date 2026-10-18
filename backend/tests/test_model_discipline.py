@@ -157,3 +157,39 @@ def test_garbage_is_still_rejected() -> None:
         extract_json("совсем не json")
     with pytest.raises(ValueError):
         extract_json("")
+
+
+@pytest.mark.anyio
+async def test_practice_share_never_beats_absent_contact_hours(provider: MockProvider) -> None:
+    """Регресс с ВМ: 254 аудиторных часа в стажировке, где их нет вовсе.
+
+    GigaChat вернул «доля практики не меньше половины» для программы, в которой
+    аудиторных занятий нет. Требования взаимоисключающие — практика это
+    контактная работа, — и солвер перегнал всю самостоятельную работу в
+    практические занятия, которых не существует.
+    """
+    from app.schemas.ir import StudyForm
+
+    request = ProgramRequest(
+        title="Стажировка DevOps",
+        program_type=ProgramType.DPP_PK,
+        total_hours=256,
+        audience="стажёры в ИТ-компаниях",
+        entry_level="базовые знания Linux",
+        study_form=StudyForm.DISTANT,
+        attestation_form="защита отчёта о стажировке",
+        attestation_hours=2,
+        no_contact_hours=True,
+        # то, что прислала модель и что противоречит структуре часов
+        min_practice_share=0.5,
+    )
+
+    program, _ = await build_skeleton(provider, request)
+
+    hours = program.modules_hours
+    assert hours.lectures == 0
+    assert hours.practice == 0
+    assert hours.labs == 0
+    assert hours.self_study == 254
+    assert program.grand_total == 256
+    assert validate_program(program, stage="skeleton").ok

@@ -372,7 +372,66 @@ def check_schedule(program: Program, report: ValidationReport) -> None:
 # --------------------------------------------------------------------------- #
 # Точка входа
 # --------------------------------------------------------------------------- #
-CHECKS = (check_hours, check_coverage, check_sources, check_template, check_schedule)
+# --------------------------------------------------------------------------- #
+# Доступность инструментов
+# --------------------------------------------------------------------------- #
+#: Сервисы, которыми в России нельзя пользоваться напрямую, и чем их заменить.
+#: Эталонный чек-лист кейса (запрос 2) требует, чтобы такие сервисы в программу
+#: не попадали. Просьбы в промпте мало: модель про это забывает, а методист
+#: получает программу, по которой слушатели не смогут заниматься.
+UNAVAILABLE_SERVICES: dict[str, str] = {
+    "chatgpt": "GigaChat или YandexGPT",
+    "openai": "Cloud.ru Foundation Models",
+    "midjourney": "Kandinsky или Шедеврум",
+    "dall-e": "Kandinsky",
+    "copilot": "GigaCode",
+    "notion": "Яндекс Документы",
+    "canva": "Яндекс Презентации или Р7-Офис",
+    "grammarly": "Орфограммка",
+    "google colab": "Jupyter или Yandex DataSphere",
+    "colab": "Jupyter или Yandex DataSphere",
+}
+
+
+def check_services(program: Program, report: ValidationReport) -> None:
+    """Инструменты, недоступные в России, в программу попадать не должны."""
+    places: list[tuple[str, str]] = [("аннотация", program.annotation), ("цель", program.goal)]
+    for topic in program.all_topics():
+        places.append((f"тема {topic.code}", f"{topic.title} {topic.content} {topic.activities}"))
+    for task in program.seminar_tasks:
+        places.append((f"задание {task.id}", f"{task.title} {task.statement}"))
+
+    # Длинные названия ищем первыми и вырезаем из текста: иначе «google colab»
+    # даст два замечания — на себя и на «colab».
+    ordered = sorted(UNAVAILABLE_SERVICES, key=len, reverse=True)
+    reported: set[str] = set()
+    for where, text in places:
+        low = (text or "").lower()
+        for service in ordered:
+            if service not in low:
+                continue
+            low = low.replace(service, " ")
+            if service in reported:
+                continue
+            reported.add(service)
+            report.add(
+                "SERVICE_UNAVAILABLE_RU",
+                Severity.WARNING,
+                f"Упомянут сервис «{service}», недоступный в России напрямую ({where})",
+                path="content",
+                hint=f"Заменить на {UNAVAILABLE_SERVICES[service]} "
+                     f"или другой доступный аналог",
+            )
+
+
+CHECKS = (
+    check_hours,
+    check_coverage,
+    check_sources,
+    check_template,
+    check_schedule,
+    check_services,
+)
 
 
 def validate_program(program: Program, *, stage: str = "full") -> ValidationReport:

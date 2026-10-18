@@ -45,8 +45,10 @@
 
 ## Из требований кейса
 
-- [ ] **12. Только сервисы, доступные в России** — пункт чек-листа запроса 2.
-      Правило в `skills/skeleton.yaml` и `skills/topic_content.yaml`
+- [x] **12. Только сервисы, доступные в России** — пункт чек-листа запроса 2.
+      Правило в навыках плюс проверка кодом `SERVICE_UNAVAILABLE_RU`: промпт
+      модель забывает, а замечание методист увидит в отчёте и в `.docx`.
+      `skills/*.yaml`, `core/validate.py`, `tests/test_services_availability.py`
 - [ ] **13. Шрифты локально** — интерфейс грузит Inter и JetBrains Mono
       с `fonts.googleapis.com`; в закрытом контуре не загрузятся
 
@@ -61,7 +63,7 @@
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 154 теста, без сети и без денег
+python -m pytest tests -q                   # 168 тестов, без сети и без денег
 python scripts/run_open_requests.py         # 5 запросов кейса с чек-листами
 python scripts/check_topic_patch.py --url <адрес> --session <id>
 ```

@@ -7,7 +7,7 @@ import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
-import { api, type AdaptChanges, type ParsedReference } from "./lib/api";
+import { api, type AdaptChanges, type ParsedReference, type RefreshResult } from "./lib/api";
 import type { SessionState } from "./lib/types";
 
 const SAMPLES = [
@@ -256,6 +256,24 @@ export function App() {
     if (!started) return;
     setSession(started);
     say("bot", "Собираю содержание: темы, тесты с ключами, задания семинаров, слайды.");
+  }
+
+  // Актуализация: что в программе успело устареть. Отчёт держим рядом с
+  // кнопкой — методисту нужно видеть находки, а не искать их в журнале.
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+
+  async function runRefresh() {
+    if (!session?.program) return;
+    say("user", "Проверь, что в программе устарело");
+    const result = await guard("refresh", () => api.refresh(session.id));
+    if (!result) return;
+    setRefreshResult(result);
+    say(
+      "bot",
+      result.findings.length
+        ? `${result.verdict} Нашёл ${result.summary.total}: устарело ${result.summary.outdated}.`
+        : `${result.verdict} Устаревшего не нашёл.`
+    );
   }
 
   // Адаптация: готовую программу переносим на новые условия. Форма прячется
@@ -551,6 +569,43 @@ export function App() {
                       </span>
                     )}
                   </div>
+                  {session?.program && (
+                    <div className="adapt-box">
+                      <button
+                        className="btn ghost"
+                        disabled={busy !== null}
+                        onClick={() => void runRefresh()}
+                        style={{ marginBottom: 12 }}
+                      >
+                        {busy === "refresh"
+                          ? "проверяю актуальность…"
+                          : "Проверить, что устарело"}
+                      </button>
+
+                      {refreshResult && (
+                        <div className="refresh-report">
+                          <div className="refresh-verdict">{refreshResult.verdict}</div>
+                          {refreshResult.findings.map((f, i) => (
+                            <div className={`refresh-item ${f.severity}`} key={i}>
+                              <span className="refresh-mark">{f.severity_word}</span>
+                              <div>
+                                <b>
+                                  {f.topic_code ? `${f.topic_code}. ` : ""}
+                                  {f.what}
+                                </b>
+                                {f.why && <div className="refresh-why">{f.why}</div>}
+                                {f.replacement && (
+                                  <div className="refresh-fix">→ {f.replacement}</div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          <div className="refresh-note">{refreshResult.disclaimer}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {session?.program && (
                     <div className="adapt-box">
                       {!adaptOpen ? (

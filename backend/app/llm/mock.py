@@ -208,8 +208,29 @@ def _mock_adapt(user: str) -> dict:
     return data
 
 
+def _mock_refresh(user: str) -> dict:
+    """Заглушка актуализации: структура ответа без разбора содержания.
+
+    Что устарело, знает только живая модель — заглушка не делает вид, что
+    умеет это определять, иначе получится шпаргалка под контрольные примеры.
+    """
+    return {
+        "findings": [
+            {
+                "topic_code": "",
+                "what": "версии инструментов в программе",
+                "why": "офлайн-заглушка не проверяет актуальность",
+                "replacement": "запустите на живой модели",
+                "severity": "aging",
+            }
+        ],
+        "verdict": "офлайн-заглушка: проверка актуальности требует живой модели",
+    }
+
+
 _DISPATCH = {
     "intake": _mock_intake,
+    "refresh": _mock_refresh,
     "skeleton": _mock_skeleton,
     "adapt": _mock_adapt,
     "topic_content": _mock_topic_content,

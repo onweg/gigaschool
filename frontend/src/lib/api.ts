@@ -88,6 +88,22 @@ export type AdaptChanges = {
   entry_level?: string;
 };
 
+export type RefreshFinding = {
+  topic_code: string;
+  what: string;
+  why: string;
+  replacement: string;
+  severity: "outdated" | "aging" | "missing";
+  severity_word: string;
+};
+
+export type RefreshResult = {
+  verdict: string;
+  findings: RefreshFinding[];
+  summary: { outdated: number; missing: number; total: number };
+  disclaimer: string;
+};
+
 export type ParsedReference = {
   filename: string;
   size_bytes: number;
@@ -161,6 +177,9 @@ export const api = {
       `/sessions/${id}/adapt`,
       { method: "POST", body: JSON.stringify(changes) }
     ),
+  /** Проверить программу на устаревшие темы и инструменты. */
+  refresh: (id: string) =>
+    call<RefreshResult>(`/sessions/${id}/refresh`, { method: "POST" }),
   state: (id: string) => call<SessionState>(`/sessions/${id}`),
   exportUrl: (id: string, kind: string) => `${BASE}/sessions/${id}/export/${kind}`,
 };

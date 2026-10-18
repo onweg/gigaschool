@@ -37,6 +37,7 @@ from app.pipeline.content import (
 )
 from app.pipeline.intake import apply_answers, reask_text, run_intake
 from app.pipeline.references import parse_reference
+from app.pipeline.refresh import content_from_text, find_outdated, program_content
 from app.pipeline.skeleton import build_skeleton
 from app.render.docx_acr import render_docx
 from app.render.lms import render_gift, render_tests_csv
@@ -729,6 +730,96 @@ def _exported(
         size=len(payload),
     )
     return Response(payload, media_type=media_type, headers=_disposition(slug, ext))
+
+
+# --------------------------------------------------------------------------- #
+# Актуализация программы
+# --------------------------------------------------------------------------- #
+def _refresh_response(report, usage) -> dict:  # noqa: ANN001
+    """Ответ с честной оговоркой о границах проверки."""
+    return {
+        "verdict": report.verdict,
+        "findings": [
+            {**f.model_dump(), "severity_word": f.word} for f in report.findings
+        ],
+        "summary": {
+            "outdated": len(report.outdated),
+            "missing": len(report.missing),
+            "total": len(report.findings),
+        },
+        "disclaimer": (
+            "Актуальность определена по знаниям модели и требует проверки "
+            "методистом: реестра устаревших технологий не существует"
+        ),
+        "tokens": usage.total,
+    }
+
+
+@app.post("/api/sessions/{session_id}/refresh")
+async def refresh_session(session_id: str) -> dict:
+    """Проверить собранную программу на устаревшие темы и инструменты."""
+    session = _session_or_404(session_id)
+    if session.program is None:
+        raise HTTPException(409, "нечего проверять: программа ещё не собрана")
+    current_session.set(session.id)
+    program = session.program
+    try:
+        report, usage = await find_outdated(
+            provider,
+            program_content(program),
+            title=program.meta.title,
+            direction=program.meta.direction,
+            audience=program.meta.audience,
+            year=str(program.meta.year),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"не удалось проверить актуальность: {exc}") from exc
+
+    session.usage.add(usage)
+    for finding in report.findings:
+        where = f"тема {finding.topic_code}: " if finding.topic_code else ""
+        session.log(
+            "refresh",
+            f"{finding.word} — {where}{finding.what}"
+            + (f" → {finding.replacement}" if finding.replacement else ""),
+            level="warning" if finding.severity == "outdated" else "info",
+        )
+    session.say("bot", f"Проверка актуальности: {report.verdict}")
+    store.save(session)
+    record.action(
+        session_id=session.id, device_id=session.device_id, kind="refresh",
+        outdated=len(report.outdated), total=len(report.findings),
+    )
+    return _refresh_response(report, usage)
+
+
+@app.post("/api/refresh/upload")
+async def refresh_uploaded(file: UploadFile) -> dict:
+    """Проверить чужую программу из файла: .docx, .pdf или текст.
+
+    Старая программа может быть написана задолго до появления агента и в
+    системе её нет — методисту достаточно принести файл.
+    """
+    data = await file.read()
+    if len(data) > MAX_REFERENCE_BYTES:
+        raise HTTPException(413, "файл больше 25 МБ")
+    try:
+        text = parse_reference(file.filename or "program", data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    try:
+        report, usage = await find_outdated(
+            provider, content_from_text(text), title=file.filename or ""
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"не удалось проверить актуальность: {exc}") from exc
+
+    return _refresh_response(report, usage)
 
 
 # --------------------------------------------------------------------------- #

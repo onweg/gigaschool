@@ -62,13 +62,17 @@
       `POST /api/sessions/{id}/adapt` + форма в разделе «Выгрузки». Исходная
       программа не меняется, часы пересчитывает тот же солвер, методист видит
       список изменений. `pipeline/adapt.py`, `skills/adapt.yaml`, `tests/test_adapt.py`
-- [ ] **11. Актуализация старой программы** с поиском устаревших тем
+- [x] **11. Актуализация старой программы** с поиском устаревших тем.
+      `POST /api/sessions/{id}/refresh` для своей программы и
+      `POST /api/refresh/upload` для чужой из файла. Агент помечает
+      устаревшее с причиной и заменой, решает методист.
+      `pipeline/refresh.py`, `skills/refresh.yaml`, `tests/test_refresh.py`
 
 ## Как проверять
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 184 теста, без сети и без денег
+python -m pytest tests -q                   # 199 тестов, без сети и без денег
 python scripts/run_open_requests.py         # 5 запросов кейса с чек-листами
 python scripts/check_topic_patch.py --url <адрес> --session <id>
 ```

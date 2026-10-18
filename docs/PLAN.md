@@ -35,8 +35,10 @@
 
 ## Найдено своими руками
 
-- [ ] **7. Мусор в названиях тем** — обрывок JSON `final_attestation': {`
-      попал в заголовок модуля в готовом документе
+- [x] **7. Мусор в названиях тем** — обрывок JSON `final_attestation': {`
+      попал в заголовок модуля в готовом документе. Нормализатор отбрасывает
+      обломки разметки и разворачивает объект, присланный строкой.
+      `pipeline/skeleton.py`, `tests/test_model_output_variance.py`
 - [x] **9. Точечная доработка темы** — пожелание методиста не доходило до
       модели, кнопка была невидимой, результат негде посмотреть.
       `app/main.py`, `HoursTable.tsx`, `tests/test_topic_patch.py`
@@ -59,7 +61,7 @@
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 140 тестов, без сети и без денег
+python -m pytest tests -q                   # 154 теста, без сети и без денег
 python scripts/run_open_requests.py         # 5 запросов кейса с чек-листами
 python scripts/check_topic_patch.py --url <адрес> --session <id>
 ```

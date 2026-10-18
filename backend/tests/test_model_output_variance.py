@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from app.core.validate import validate_program
 from app.pipeline.skeleton import as_dict, as_dicts, assemble_program
 from app.schemas.ir import ProgramType
@@ -75,3 +77,71 @@ def test_normalisers_cover_the_shapes_models_send() -> None:
     assert as_dicts(None) == []
     # Пустые строки не превращаются в пустые объекты
     assert as_dicts(["", "  ", "Б"]) == [{"title": "Б"}]
+
+
+# --------------------------------------------------------------------------- #
+# Обломки разметки в названиях
+# --------------------------------------------------------------------------- #
+#: Живой случай: в готовом документе модуль назывался «final_attestation': {».
+#: Модель оборвала ответ, а нормализатор честно сделал из куска JSON заголовок.
+JSON_JUNK = [
+    "final_attestation': {",
+    "modules: [",
+    "}, {",
+    '"topics": [',
+    "[",
+    '"',
+    "   ",
+    "{",
+]
+
+MEANINGFUL = [
+    "Введение в Python",
+    "Циклы: while и for",
+    "SQL: выборки и соединения",
+    "Основы статистики",
+]
+
+
+@pytest.mark.parametrize("junk", JSON_JUNK)
+def test_json_fragments_never_become_titles(junk: str) -> None:
+    from app.pipeline.skeleton import as_dicts
+
+    assert as_dicts([junk]) == [], f"обломок разметки стал названием: {junk!r}"
+
+
+@pytest.mark.parametrize("title", MEANINGFUL)
+def test_normal_titles_survive(title: str) -> None:
+    """Фильтр не должен съедать названия с двоеточием — их много."""
+    from app.pipeline.skeleton import as_dicts
+
+    assert as_dicts([title]) == [{"title": title}]
+
+
+def test_object_sent_as_string_is_unpacked() -> None:
+    """Целый объект строкой — разворачиваем, терять его незачем."""
+    from app.pipeline.skeleton import as_dicts
+
+    assert as_dicts(['{"title": "Основы SQL", "weight": 2}']) == [
+        {"title": "Основы SQL", "weight": 2}
+    ]
+
+
+def test_junk_does_not_reach_the_document() -> None:
+    """Сборка каркаса на засоренном ответе: мусора в модулях нет."""
+    from app.pipeline.skeleton import assemble_program
+
+    program = assemble_program(
+        _request(),
+        {
+            "title": "Анализ данных",
+            "goal": "Научить анализировать данные",
+            "modules": ["Основы Python", *JSON_JUNK, "Работа с pandas"],
+            "outcomes": ["знать основы pandas"],
+        },
+    )
+
+    titles = [m.title for m in program.modules]
+    assert titles == ["Основы Python", "Работа с pandas"], titles
+    assert all("{" not in t and "':" not in t for t in titles)
+    assert abs(program.grand_total - 72) < 0.01, "часы должны сойтись и после чистки"

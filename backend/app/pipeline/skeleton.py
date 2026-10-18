@@ -7,6 +7,9 @@
 """
 from __future__ import annotations
 
+import json
+import re
+
 from app.core.hours import (
     align_to_grain,
     distribute_modules,
@@ -61,18 +64,52 @@ def contact_only(request: ProgramRequest) -> bool:
     return abs(planned - request.total_hours) < 0.01
 
 
+#: Обломки JSON, которые модель иногда присылает вместо названия: обрезанный
+#: ответ, кусок разметки, имя поля с двоеточием. В документ такое попадать не
+#: должно — в готовой программе был модуль с названием «final_attestation\': {».
+_GARBAGE = re.compile(
+    r"""
+      ^[\s{}\[\],:"']*$          # одни скобки, кавычки и запятые
+    | ^[a-z_]{3,}['\"]?\s*:        # имя поля: final_attestation': {
+    | ['\"]\s*:\s*[{\[]           # обрывок пары ключ-значение
+    | [{\[]\s*$                    # обрывается на открывающей скобке
+    """,
+    re.VERBOSE,
+)
+
+
+def looks_like_json_fragment(text: str) -> bool:
+    """Строка — обломок разметки, а не осмысленное название."""
+    return bool(_GARBAGE.search(text.strip()))
+
+
 def as_dict(value: object, *, key: str = "title") -> dict:
     """Привести значение к словарю.
 
     Модели регулярно упрощают структуру: вместо {"title": "..."} возвращают
     просто строку. Падать на этом нельзя — агент обязан доработать то, что
     пришло, поэтому строка разворачивается в объект с одним полем.
+
+    А вот обломки разметки отбрасываем: лучше потерять один элемент, чем
+    напечатать в учебном плане строку «final_attestation\': {».
     """
     if isinstance(value, dict):
         return value
-    if isinstance(value, str) and value.strip():
-        return {key: value.strip()}
-    return {}
+    if not isinstance(value, str):
+        return {}
+    text = value.strip()
+    if not text:
+        return {}
+    # Модель могла вернуть объект строкой — разворачиваем, раз он целый.
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if looks_like_json_fragment(text):
+        return {}
+    return {key: text}
 
 
 def as_dicts(value: object, *, key: str = "title") -> list[dict]:

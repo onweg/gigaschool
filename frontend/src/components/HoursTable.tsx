@@ -55,6 +55,7 @@ export function HoursTable({
   const matches = Math.abs(grand - program.meta.total_hours) < 0.01;
 
   return (
+    <div className="table-scroll">
     <table>
       <thead>
         <tr>
@@ -221,5 +222,6 @@ export function HoursTable({
         </tr>
       </tbody>
     </table>
+    </div>
   );
 }

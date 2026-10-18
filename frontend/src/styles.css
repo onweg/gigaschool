@@ -758,3 +758,82 @@ tr.clickable:hover td { background: var(--surface-3); }
   font-style: italic;
   color: var(--faint);
 }
+
+/* ===================================================================== */
+/* Телефон                                                               */
+/* ===================================================================== */
+/* Методист открывает агента и с телефона — посмотреть, что получилось,
+   показать коллеге, скачать .docx. Полноценно собирать программу на
+   маленьком экране никто не станет, поэтому задача простая: ничего не
+   должно уезжать за край и обрезаться. */
+
+/* Широкие таблицы (учебный план — восемь колонок) прокручиваются вбок,
+   а не ломают вёрстку страницы. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 720px) {
+  .shell { padding: 10px; gap: 10px; }
+
+  /* Сайдбар превращается в строку с прокручиваемой навигацией. */
+  .sidebar { padding: 10px 12px; gap: 10px; }
+  .sidebar-foot { display: none; }      /* подпись «Методист» места не стоит */
+  .nav { gap: 6px; }
+  .nav-item { padding: 8px 12px; font-size: 13px; white-space: nowrap; }
+  .nav-item .count { display: none; }
+
+  .card { padding: 16px 14px; border-radius: 14px; }
+  .page-title { font-size: 24px; }
+  .page-lede { font-size: 13px; }
+
+  /* Шапка со статусами переносится и не вылезает за край. */
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .topbar .pill { font-size: 11px; }
+
+  table { font-size: 12px; }
+  th, td { padding: 8px 6px; }
+  td.num, th.num { width: 40px; font-size: 11px; }
+
+  /* Выгрузки — в две колонки вместо ряда карточек. */
+  .exports { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .exports a { min-width: 0; padding: 12px 14px; font-size: 13px; }
+
+  .metrics { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .metric { padding: 14px 12px; }
+  .metric .v { font-size: 22px; }
+
+  /* Чат занимает экран целиком: в окошке 440px на телефоне нет смысла. */
+  .widget {
+    right: 0; bottom: 0; left: 0;
+    width: 100%; max-width: none;
+    /* dvh учитывает адресную строку, которая на телефоне то появляется,
+       то прячется; vh — запасной вариант для старых браузеров. */
+    height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+  }
+  .widget-launcher { right: 12px; bottom: 12px; padding: 12px 16px; font-size: 13px; }
+  .msg { max-width: 94%; font-size: 13px; }
+
+  /* Формы доработки и адаптации — в одну колонку. */
+  .adapt-fields { flex-direction: column; gap: 10px; }
+  .patch-form { max-width: none; }
+  .patch-actions { flex-wrap: wrap; }
+  .patch-actions .hint { display: none; }   /* ⌘+Enter на телефоне не нажать */
+
+  /* Полосы в статистике: подписи сверху, значение рядом с полосой. */
+  .bar-row { grid-template-columns: 1fr 64px; grid-template-areas: "label label" "track value"; }
+  .bar-label { grid-area: label; }
+  .bar-track { grid-area: track; }
+  .bar-value { grid-area: value; }
+
+  .refresh-item { flex-direction: column; gap: 4px; }
+  .refresh-mark { flex: none; }
+
+  .token-gate form { flex-direction: column; }
+}
+
+@media (max-width: 420px) {
+  .exports { grid-template-columns: 1fr; }
+  .metrics { grid-template-columns: 1fr; }
+  .page-title { font-size: 21px; }
+}

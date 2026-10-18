@@ -403,10 +403,21 @@ export function ChatWidget({
                 disabled={Boolean(session)}
               />
 
+              {/* Подпись вместо длинного примера в placeholder: пример в полтора
+                  абзаца читается как уже введённый текст и мешает понять,
+                  что поле пустое и писать надо своими словами. */}
+              <label className="composer-label" htmlFor="request">
+                {session ? "Сообщение агенту" : "Что за программа нужна"}
+              </label>
               <textarea
+                id="request"
                 rows={2}
                 value={draft}
-                placeholder="Программа повышения квалификации на 72 часа по анализу данных на Python для сотрудников банков, очно-заочная, итоговая аттестация — защита проекта"
+                placeholder={
+                  session
+                    ? "например: усложни тест по теме 2.1"
+                    : "например: повышение квалификации, 72 часа, анализ данных для банков"
+                }
                 onChange={(event) => onDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {

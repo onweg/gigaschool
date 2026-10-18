@@ -759,6 +759,15 @@ tr.clickable:hover td { background: var(--surface-3); }
   color: var(--faint);
 }
 
+.composer-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
 /* ===================================================================== */
 /* Телефон                                                               */
 /* ===================================================================== */

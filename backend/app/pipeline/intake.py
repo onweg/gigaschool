@@ -77,7 +77,28 @@ def _as_number(token: str) -> int:
 
 
 def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
-    """Расписание вытаскиваем регуляркой, а не моделью: это арифметика."""
+    """Расписание вытаскиваем регуляркой, а не моделью: это арифметика.
+
+    Порядок важен: число недель выводится из объёма программы и длительности
+    занятия, поэтому объём разбирается первым.
+    """
+    if request.total_hours is None:
+        for prefix, value in _HOURS.findall(text):
+            if prefix:
+                continue  # «по 2 часа», «не больше 4 часов в день» — не объём
+            hours = float(value)
+            # Программ короче 16 ак. ч. в кейсе нет; меньшие числа — это
+            # длительность занятия или срок, а не объём программы.
+            if hours >= 16:
+                request.total_hours = hours
+                break
+    if request.program_type is None:
+        if _TYPE_OBSH.search(text):
+            request.program_type = ProgramType.DOP_OBSH
+            request.program_type_confidence = max(request.program_type_confidence, 0.9)
+        elif _TYPE_PK.search(text):
+            request.program_type = ProgramType.DPP_PK
+            request.program_type_confidence = max(request.program_type_confidence, 0.9)
     if m := _WEEKS.search(text):
         request.weeks = int(m.group(1))
     if m := _MONTHS.search(text):
@@ -100,23 +121,6 @@ def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
         request.min_practice_share = 0.5
     if _NO_CONTACT.search(text):
         request.no_contact_hours = True
-    if request.total_hours is None:
-        for prefix, value in _HOURS.findall(text):
-            if prefix:
-                continue  # «по 2 часа», «не больше 4 часов в день» — не объём
-            hours = float(value)
-            # Программ короче 16 ак. ч. в кейсе нет; меньшие числа — это
-            # длительность занятия или срок, а не объём программы.
-            if hours >= 16:
-                request.total_hours = hours
-                break
-    if request.program_type is None:
-        if _TYPE_OBSH.search(text):
-            request.program_type = ProgramType.DOP_OBSH
-            request.program_type_confidence = max(request.program_type_confidence, 0.9)
-        elif _TYPE_PK.search(text):
-            request.program_type = ProgramType.DPP_PK
-            request.program_type_confidence = max(request.program_type_confidence, 0.9)
     if request.study_form is None:
         for pattern, form in _FORMS:
             if pattern.search(text):

@@ -60,7 +60,13 @@ def test_answers_continue_the_same_session() -> None:
         "/api/generate",
         json={
             "session_id": session_id,
-            "answers": {"program_type": "повышение квалификации", "total_hours": "72"},
+            "answers": {
+                "program_type": "повышение квалификации",
+                "total_hours": "72",
+                # Форма обучения в запросе не названа — агент о ней спросил,
+                # методист отвечает.
+                "study_form": "очно-заочная",
+            },
         },
     )
     assert second.status_code == 200, second.text

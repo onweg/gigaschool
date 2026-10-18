@@ -196,10 +196,19 @@ def _state(session: Session) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @app.get("/api/health")
 async def health() -> dict:
+    offline = provider.name.startswith("mock")
     return {
         "status": "ok",
         "llm_provider": provider.name,
         "llm_model": provider.model or "—",
+        # Явный признак: на заглушке содержание программ не генерируется,
+        # и это должно быть видно снаружи, а не выясняться по текстам.
+        "offline_stub": offline,
+        "note": (
+            "офлайн-заглушка: структура и часы настоящие, содержание — болванки"
+            if offline
+            else "работа на модели"
+        ),
     }
 
 

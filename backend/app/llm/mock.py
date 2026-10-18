@@ -45,32 +45,24 @@ class MockProvider(LLMProvider):
 
 # --------------------------------------------------------------------------- #
 def _mock_intake(user: str) -> dict:
-    low = user.lower()
-    hours = None
-    for m in re.finditer(r"(\d{2,3})\s*(?:академических\s*)?час", low):
-        hours = float(m.group(1))
-        break
-    is_obsh = "общеразвивающ" in low or "школьник" in low
-    missing = []
-    if hours is None:
-        missing.append("total_hours")
-    if not is_obsh and "повышения квалификации" not in low:
-        missing.append("program_type")
+    """Нейтральный ответ: заглушка НЕ разбирает запрос методиста.
+
+    Раньше здесь стояли правила вида «есть слово „школьник“ — значит
+    общеразвивающая программа». Выглядело это как подстройка под контрольные
+    примеры, и справедливо: заглушка знала правильные ответы на запросы кейса.
+
+    Теперь она возвращает только то, что не зависит от текста. Тип программы,
+    объём, форму обучения и расписание извлекает `pipeline/intake.py` —
+    разбором самого запроса, одинаково и на заглушке, и на живой модели.
+    Чего в запросе нет — агент спросит у методиста.
+    """
     return {
-        "program_type": "dop_obsh" if is_obsh else "dpp_pk",
-        "program_type_confidence": 0.9 if (is_obsh or "повышения квалификации" in low) else 0.4,
         "title": "Программа по запросу методиста",
         "direction": "ИТ",
-        "total_hours": hours,
         "audience": "слушатели по описанию запроса",
         "entry_level": "не указан",
-        "study_form": "ochno_zaochnaya",
         "attestation_form": "защита проекта",
         "constraints": [],
-        "missing": missing,
-        "questions": [
-            {"field": f, "question": f"Уточните параметр: {f}"} for f in missing
-        ][:5],
     }
 
 

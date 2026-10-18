@@ -6,12 +6,36 @@ from typing import Any
 import csv
 import io
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
+from app.config import get_settings
 from app.metrics import db
 
-router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+def require_token(request: Request) -> None:
+    """Телеметрия закрыта токеном.
+
+    В ней тексты запросов методистов, модели, стоимость генераций — это не то,
+    что отдают по ссылке. Токен принимается заголовком (так ходит интерфейс)
+    или параметром запроса (так удобно открыть страницу и выгрузить CSV).
+    Пока токен не задан, раздел закрыт целиком: «открыто по умолчанию» —
+    это не настройка, а недосмотр.
+    """
+    expected = get_settings().metrics_token
+    if not expected:
+        raise HTTPException(
+            503,
+            "статистика закрыта: задайте METRICS_TOKEN в окружении сервиса",
+        )
+    supplied = request.headers.get("x-metrics-token") or request.query_params.get("token")
+    if supplied != expected:
+        raise HTTPException(401, "нужен токен доступа к статистике")
+
+
+router = APIRouter(
+    prefix="/api/metrics", tags=["metrics"], dependencies=[Depends(require_token)]
+)
 
 #: Стадии воронки в порядке прохождения.
 FUNNEL = ["created", "clarifying", "skeleton", "approved", "content", "ready", "failed"]

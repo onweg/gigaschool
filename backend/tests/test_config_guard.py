@@ -187,6 +187,50 @@ def test_no_warnings_in_a_clean_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
     monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("METRICS_TOKEN", "s3cret")
     get_settings.cache_clear()
 
     assert check_config() == []
+
+
+def test_metrics_are_closed_without_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """В телеметрии тексты запросов и стоимость — открытой по ссылке быть не должно."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("METRICS_TOKEN", raising=False)
+    get_settings.cache_clear()
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.get("/api/metrics/overview").status_code == 503
+    assert client.get("/api/metrics/export.csv?table=sessions").status_code == 503
+
+
+def test_metrics_need_the_right_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("METRICS_TOKEN", "s3cret")
+    get_settings.cache_clear()
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.get("/api/metrics/overview").status_code == 401
+    assert client.get(
+        "/api/metrics/overview", headers={"X-Metrics-Token": "wrong"}
+    ).status_code == 401
+    assert client.get(
+        "/api/metrics/overview", headers={"X-Metrics-Token": "s3cret"}
+    ).status_code == 200
+    # Параметром запроса — чтобы можно было открыть ссылку и выгрузить CSV.
+    assert client.get("/api/metrics/overview?token=s3cret").status_code == 200
+
+
+def test_health_stays_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Проверка живости нужна docker и площадке — её закрывать нельзя."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("METRICS_TOKEN", "s3cret")
+    get_settings.cache_clear()
+    from app.main import app
+
+    assert TestClient(app).get("/api/health").status_code == 200

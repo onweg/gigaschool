@@ -39,6 +39,10 @@ env:        ## собрать .env из доступов площадки
 	@# и авторизация развалится, поэтому чистим их здесь.
 	@sed 's/"//g' $(PLATFORM_ENV) > $(ENV_FILE)
 	@grep -q '^OPENAI_MODEL=' $(ENV_FILE) || echo "OPENAI_MODEL=$(MODEL)" >> $(ENV_FILE)
+	@# Телеметрия закрыта токеном; если его нет — генерируем и показываем один раз.
+	@grep -q '^METRICS_TOKEN=' $(ENV_FILE) || \
+		echo "METRICS_TOKEN=$$(python3 -c 'import secrets;print(secrets.token_urlsafe(18))')" >> $(ENV_FILE)
+	@echo "статистика:  #/stats?token=$$(grep '^METRICS_TOKEN=' $(ENV_FILE) | cut -d= -f2-)"
 	@chmod 600 $(ENV_FILE)
 	@echo "$(ENV_FILE) собран, модель: $$(grep '^OPENAI_MODEL=' $(ENV_FILE) | cut -d= -f2-)"
 

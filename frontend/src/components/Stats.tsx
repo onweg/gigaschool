@@ -1,16 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
-import {
-  DEVICE_ID,
-  metrics,
-  type DayPoint,
-  type FindingStat,
-  type MetricsOverview,
-  type RequestMix,
-  type SessionDetail,
-  type SessionRow,
-  type SkillStat,
-} from "../lib/api";
+import { ApiError, DEVICE_ID, metrics, metricsToken, type DayPoint, type FindingStat, type MetricsOverview, type RequestMix, type SessionDetail, type SessionRow, type SkillStat } from "../lib/api";
 import { DaysChart, FunnelBars, MiniBars, SERIES } from "./Charts";
 import { formatDuration } from "./Motion";
 
@@ -84,6 +74,9 @@ export function Stats() {
   const [mix, setMix] = useState<RequestMix | null>(null);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState("");
+  // 401/503 — это не поломка, а «нужен токен»: показываем форму, а не ошибку.
+  const [needToken, setNeedToken] = useState<"ask" | "off" | null>(null);
+  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -103,8 +96,12 @@ export function Stats() {
       setSessions(l.sessions);
       setMix(m);
       setError("");
+      setNeedToken(null);
     } catch (exc) {
-      setError((exc as Error).message);
+      const status = exc instanceof ApiError ? exc.status : 0;
+      if (status === 401) setNeedToken("ask");
+      else if (status === 503) setNeedToken("off");
+      else setError((exc as Error).message);
     } finally {
       setLoading(false);
     }
@@ -115,6 +112,48 @@ export function Stats() {
   }, [load]);
 
   if (loading && !overview) return <div className="viz-empty">Загружаю статистику…</div>;
+
+  if (needToken === "off")
+    return (
+      <div className="token-gate">
+        <h1 className="page-title">Статистика закрыта</h1>
+        <p className="page-lede">
+          В телеметрии видны тексты запросов методистов и стоимость генераций,
+          поэтому раздел не открывается без токена. Задайте <code>METRICS_TOKEN</code>{" "}
+          в окружении сервиса и перезапустите его.
+        </p>
+      </div>
+    );
+
+  if (needToken === "ask")
+    return (
+      <div className="token-gate">
+        <h1 className="page-title">Нужен токен</h1>
+        <p className="page-lede">
+          Введите токен из <code>METRICS_TOKEN</code>. Он сохранится в этом браузере,
+          спрашивать второй раз не будем.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            metricsToken.set(token);
+            setLoading(true);
+            void load();
+          }}
+        >
+          <input
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="токен доступа"
+            autoFocus
+          />
+          <button className="accent" type="submit">
+            Открыть
+          </button>
+        </form>
+      </div>
+    );
+
   if (error) return <div className="ref-error">Телеметрия недоступна: {error}</div>;
   if (!overview) return null;
 

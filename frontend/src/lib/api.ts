@@ -21,18 +21,62 @@ export const DEVICE_ID = (() => {
   }
 })();
 
+/** Токен к телеметрии. Хранится у того, кто его ввёл, и больше нигде:
+ *  в статистике видны тексты запросов методистов и стоимость генераций. */
+const TOKEN_KEY = "acr.metrics-token";
+
+export const metricsToken = {
+  get(): string {
+    try {
+      // Удобный вход по ссылке вида #/stats?token=… — один раз и в хранилище.
+      const fromUrl = new URLSearchParams(location.hash.split("?")[1] ?? "").get("token");
+      if (fromUrl) {
+        localStorage.setItem(TOKEN_KEY, fromUrl);
+        location.hash = location.hash.split("?")[0];
+        return fromUrl;
+      }
+      return localStorage.getItem(TOKEN_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  },
+  set(value: string) {
+    try {
+      localStorage.setItem(TOKEN_KEY, value.trim());
+    } catch {
+      /* приватный режим — просто не запомним */
+    }
+  },
+  clear() {
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* нечего чистить */
+    }
+  },
+};
+
+/** Ошибка с кодом ответа: интерфейсу нужно отличить «нужен токен» от прочего. */
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = path.startsWith("/metrics") ? metricsToken.get() : "";
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       "X-Device-Id": DEVICE_ID,
+      ...(token ? { "X-Metrics-Token": token } : {}),
       ...(init?.headers ?? {}),
     },
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`${response.status}: ${detail.slice(0, 300)}`);
+    throw new ApiError(response.status, `${response.status}: ${detail.slice(0, 300)}`);
   }
   return (await response.json()) as T;
 }

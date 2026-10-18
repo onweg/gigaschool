@@ -17,6 +17,8 @@ services:
       MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-0}
       PRICE_PROMPT_PER_1K: ${PRICE_PROMPT_PER_1K:-0.20}
       PRICE_COMPLETION_PER_1K: ${PRICE_COMPLETION_PER_1K:-0.60}
+      # Телеметрия закрыта токеном: в ней запросы методистов и стоимость.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       DATA_DIR: /app/data
     volumes:
       - ./backend/data:/app/data

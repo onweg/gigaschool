@@ -99,6 +99,11 @@ class Settings(BaseModel):
         default_factory=lambda: float(os.getenv("MANUAL_HOURS_PER_PROGRAM", "60"))
     )
 
+    #: Токен для чтения телеметрии. В ней лежат тексты запросов методистов
+    #: и стоимость генераций — наружу это отдавать нельзя. Пусто — раздел
+    #: статистики закрыт целиком.
+    metrics_token: str = Field(default_factory=lambda: os.getenv("METRICS_TOKEN", ""))
+
     data_dir: str = Field(default_factory=lambda: os.getenv("DATA_DIR", "./data"))
     cors_origins: list[str] = Field(
         default_factory=lambda: os.getenv(
@@ -200,6 +205,11 @@ def check_config() -> list[str]:
         warnings.append(
             "снято ограничение на адрес модели (LLM_ALLOW_ANY_HOST=1). "
             "Кейс допускает только Cloud.ru — для сдачи флаг нужно убрать"
+        )
+    if not s.metrics_token:
+        warnings.append(
+            "METRICS_TOKEN не задан — раздел статистики закрыт. "
+            "Задайте токен, чтобы открыть его себе"
         )
     if s.llm_max_parallel > 4:
         warnings.append(

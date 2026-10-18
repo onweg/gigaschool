@@ -193,3 +193,151 @@ async def test_practice_share_never_beats_absent_contact_hours(provider: MockPro
     assert hours.self_study == 254
     assert program.grand_total == 256
     assert validate_program(program, stage="skeleton").ok
+
+
+def test_answer_keys_are_validated() -> None:
+    """Живой случай: модель вернула ключ на вариант, которого нет в списке.
+
+    Такой вопрос нельзя ни проверить, ни загрузить в LMS, поэтому индексы вне
+    диапазона отбрасываются, а при пустом результате ставится первый вариант —
+    методист увидит его в отчёте и поправит.
+    """
+    from app.pipeline.content import _valid_keys
+
+    assert _valid_keys([5], ["а", "б"]) == [0], "индекс вне диапазона — не ключ"
+    assert _valid_keys(["x"], ["а", "б"]) == [0], "не число — не ключ"
+    assert _valid_keys([], ["а", "б"]) == [0], "без ключа вопрос бесполезен"
+    assert _valid_keys([1, 1], ["а", "б"]) == [1], "повторы схлопываются"
+    assert _valid_keys([0, 1], ["а", "б"]) == [0, 1], "несколько верных — норма"
+
+
+@pytest.mark.anyio
+async def test_attestation_without_criteria_is_reported(provider: MockProvider) -> None:
+    """«Защита проекта» без критериев — половина требования.
+
+    Методист не сможет ни принять работу, ни объяснить слушателю требования.
+    """
+    from app.core.validate import validate_program
+
+    request = ProgramRequest(
+        title="Тест",
+        program_type=ProgramType.DPP_PK,
+        total_hours=72,
+        audience="специалисты",
+        entry_level="базовый",
+        attestation_form="защита проекта",
+    )
+    program, _ = await build_skeleton(provider, request)
+    program.final_attestation.criteria = []
+
+    codes = [f.code for f in validate_program(program, stage="skeleton").findings]
+
+    assert "ATTESTATION_NO_CRITERIA" in codes
+
+
+@pytest.mark.anyio
+async def test_named_topics_reach_the_skeleton_prompt(provider: MockProvider) -> None:
+    """Темы, названные методистом прямо, — задание, а не пожелание.
+
+    В живых прогонах SQL и тема об этике исчезали из программы, хотя оба
+    были написаны в запросе буквально.
+    """
+    from app.llm.base import Completion, Usage
+
+    seen: list[str] = []
+
+    class SpyProvider(MockProvider):
+        async def complete(self, *, system: str, user: str, **kwargs) -> Completion:  # noqa: ANN003
+            seen.append(user)
+            return await super().complete(system=system, user=user, **kwargs)
+
+    request = ProgramRequest(
+        title="Анализ данных",
+        program_type=ProgramType.DPP_PK,
+        total_hours=72,
+        audience="сотрудники банков",
+        entry_level="базовый",
+        must_cover=["pandas", "визуализация", "SQL", "основы статистики"],
+    )
+    await build_skeleton(SpyProvider(), request)
+
+    prompt = " ".join(seen)
+    assert "обязательно раскрыть темы" in prompt
+    for topic in ("pandas", "SQL", "основы статистики"):
+        assert topic in prompt, f"тема «{topic}» не дошла до модели"
+
+
+@pytest.mark.anyio
+async def test_unavailable_services_are_replaced_not_just_flagged() -> None:
+    """Чек-лист требует, чтобы недоступных сервисов в программе не было.
+
+    Пометить находку мало: методист получит программу, по которой слушатели
+    не смогут заниматься. Агент переписывает затронутые темы сам.
+    """
+    from app.llm.base import Completion, Usage
+    from app.pipeline.content import replace_unavailable_services
+
+    class Fixer(MockProvider):
+        async def complete(self, *, system: str, user: str, **kwargs):  # noqa: ANN003, ANN201
+            if "SKILL:topic_content" in system:
+                assert "ChatGPT" in user or "chatgpt" in user, "не сказано, что заменять"
+                return Completion(
+                    text='{"content": "Работа с GigaChat", "activities": "ПР"}',
+                    usage=Usage(),
+                    model="fixer",
+                )
+            return await super().complete(system=system, user=user, **kwargs)
+
+    request = ProgramRequest(
+        title="ИИ в работе учителя",
+        program_type=ProgramType.DPP_PK,
+        total_hours=36,
+        audience="учителя",
+        entry_level="базовый",
+    )
+    program, _ = await build_skeleton(MockProvider(), request)
+    program.all_topics()[0].content = "Разбираем ChatGPT для подготовки уроков"
+
+    await replace_unavailable_services(Fixer(), program)
+
+    text = program.all_topics()[0].content.lower()
+    assert "chatgpt" not in text
+    assert "gigachat" in text
+
+
+@pytest.mark.anyio
+async def test_topics_without_outcomes_get_linked(provider: MockProvider) -> None:
+    """Тема без результатов обучения нечем проверять, а вопросы по ней —
+    сироты. Привязываем к результатам её модуля."""
+    from app.core.validate import validate_program
+    from app.pipeline.skeleton import assemble_program
+
+    program = assemble_program(
+        ProgramRequest(
+            title="Тест",
+            program_type=ProgramType.DPP_PK,
+            total_hours=72,
+            audience="специалисты",
+            entry_level="базовый",
+        ),
+        {
+            "goal": "Цель",
+            "outcomes": [
+                {"id": "RO-1", "kind": "знание", "text": "знать основы"},
+                {"id": "RO-2", "kind": "умение", "text": "уметь применять"},
+            ],
+            # модель не привязала темы к РО
+            "modules": [
+                {
+                    "title": "Модуль 1",
+                    "weight": 1,
+                    "outcome_ids": ["RO-1", "RO-2"],
+                    "topics": [{"title": "Тема A"}, {"title": "Тема B"}],
+                }
+            ],
+        },
+    )
+
+    assert all(t.outcome_ids for t in program.all_topics())
+    codes = [f.code for f in validate_program(program, stage="skeleton").findings]
+    assert "COVERAGE_TOPIC_NO_OUTCOME" not in codes

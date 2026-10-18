@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from math import ceil
 
 from app.core.hours import (
     align_to_grain,
@@ -171,6 +172,14 @@ async def build_skeleton(
         f"Срок реализации: {request.duration_note or '—'}",
     ]
     constraints = list(request.constraints)
+    # Темы, названные методистом прямо, — обязательная часть программы.
+    # Без этого модель пропускает их: в живых прогонах SQL и тема об этике
+    # исчезали, хотя оба были написаны в запросе буквально.
+    if request.must_cover:
+        constraints.append(
+            'обязательно раскрыть темы, названные методистом: '
+            + '; '.join(request.must_cover)
+        )
     if request.min_practice_share:
         constraints.append(
             f"доля практики не менее {int(request.min_practice_share * 100)}% часов"
@@ -352,14 +361,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
             description=str(attestation_raw.get("description", "") or ""),
             criteria=[str(x) for x in attestation_raw.get("criteria") or []],
         ),
-        schedule=Schedule(
-            weeks=request.weeks,
-            days=request.days,
-            sessions=request.sessions,
-            hours_per_session=request.hours_per_session,
-            max_hours_per_day=request.max_hours_per_day,
-            note=request.duration_note,
-        ),
+        schedule=_schedule_for(request, total),
         entry_requirements=str(data.get("entry_requirements", "") or request.entry_level),
         sources=[
             Source(
@@ -373,6 +375,40 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
     )
     _attach_orphan_outcomes(program)
     return program
+
+
+def _schedule_for(request: ProgramRequest, total: float) -> Schedule:
+    """Календарный график с проверкой ёмкости.
+
+    Срок методист называет приблизительно («около двух месяцев»), а ограничение
+    по часам в день — точно. Если в названный срок объём не помещается, срок
+    растягиваем: это ближе к намерению, чем выдать график, в который программа
+    заведомо не влезает. Расхождение отражаем в примечании, чтобы методист
+    увидел, что срок пришлось подвинуть.
+    """
+    days = request.days
+    note = request.duration_note
+    if request.max_hours_per_day and total:
+        need = ceil(total / request.max_hours_per_day)
+        if days is None or days < need:
+            if days is not None:
+                note = (
+                    f"{note + '; ' if note else ''}срок расширен до {need} дней: "
+                    f"{total:g} ч при {request.max_hours_per_day:g} ч в день "
+                    f"в {days} дней не укладываются"
+                ).strip()
+            days = need
+    weeks = request.weeks
+    if days and (weeks is None or weeks * 7 < days):
+        weeks = ceil(days / 7)
+    return Schedule(
+        weeks=weeks,
+        days=days,
+        sessions=request.sessions,
+        hours_per_session=request.hours_per_session,
+        max_hours_per_day=request.max_hours_per_day,
+        note=note,
+    )
 
 
 def _outcome_kind(value: object) -> OutcomeKind:
@@ -406,3 +442,17 @@ def _attach_orphan_outcomes(program: Program) -> None:
             topics[0],
         )
         target.outcome_ids.append(outcome.id)
+
+    # Обратная сторона: тема без единого РО. Такую тему нечем проверять,
+    # а вопросы по ней остаются без привязки — это ловит чек-лист кейса.
+    # Берём результаты её модуля, иначе первый подходящий по порядку.
+    known = {o.id for o in program.outcomes}
+    for module in program.modules:
+        module_outcomes = [oid for oid in module.outcome_ids if oid in known]
+        for index, topic in enumerate(module.topics):
+            if topic.outcome_ids:
+                continue
+            if module_outcomes:
+                topic.outcome_ids.append(module_outcomes[index % len(module_outcomes)])
+            elif program.outcomes:
+                topic.outcome_ids.append(program.outcomes[0].id)

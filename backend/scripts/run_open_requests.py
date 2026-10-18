@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,9 +28,22 @@ from app.core.validate import validate_program
 from app.pipeline.content import build_content
 from app.pipeline.intake import apply_answers, run_intake
 from app.pipeline.skeleton import build_skeleton
-from app.schemas.ir import Program, ProgramType
+from app.render.docx_acr import render_docx
+from app.render.lms import render_gift
+from app.render.pptx_slides import render_pptx
+from app.schemas.ir import Program, ProgramType, VerificationStatus
 
 Check = Callable[[Program], tuple[bool, str]]
+
+#: Проверки содержания: заглушка пишет болванки и провалит их по определению,
+#: поэтому на mock они пропускаются, а на живой модели — обязательны.
+NEEDS_MODEL: set[str] = set()
+
+
+def content_check(title: str, check: Check) -> tuple[str, Check]:
+    """Пометить проверку как требующую живой модели."""
+    NEEDS_MODEL.add(title)
+    return title, check
 
 
 def hours_eq(expected: float) -> Check:
@@ -109,6 +123,286 @@ def slides_for_first_topics(count: int) -> Check:
     return check
 
 
+
+
+# ------------------- проверки по эталонным чек-листам кейса ---------------- #
+# Каждая ниже соответствует строке из data/acr/case-open-requests.docx.
+# Смысл формулировок кодом не проверить — это читают глазами; здесь только
+# то, что можно посчитать.
+
+
+def _all_text(p: Program) -> str:
+    """Весь осмысленный текст программы одной строкой — для поиска по темам."""
+    parts = [p.goal, p.annotation, p.relevance, p.entry_requirements]
+    parts += [o.text for o in p.outcomes]
+    for topic in p.all_topics():
+        parts += [topic.title, topic.content, topic.activities]
+    for module in p.modules:
+        parts.append(module.title)
+    parts.append(p.final_attestation.form)
+    parts.append(p.final_attestation.description)
+    parts += p.final_attestation.criteria
+    for task in p.seminar_tasks:
+        parts += [task.title, task.statement]
+    return " ".join(x for x in parts if x).lower()
+
+
+def covers_topics(*groups: tuple[str, ...]) -> Check:
+    """Каждая тема из запроса должна где-то раскрываться."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        text = _all_text(p)
+        missing = [g[0] for g in groups if not any(word.lower() in text for word in g)]
+        return not missing, f"не раскрыты: {', '.join(missing) or 'ничего'}"
+
+    return check
+
+
+def mentions(*words: str, what: str = "") -> Check:
+    """В программе есть упоминание хотя бы одного из слов."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        text = _all_text(p)
+        hit = next((w for w in words if w.lower() in text), None)
+        return bool(hit), f"{what or 'упоминание'}: {hit or 'не найдено'}"
+
+    return check
+
+
+def issued_document_mentions(word: str) -> Check:
+    def check(p: Program) -> tuple[bool, str]:
+        got = p.meta.issued_document or "—"
+        return word.lower() in got.lower(), f"выдаётся: {got}"
+
+    return check
+
+
+def attestation_is(*words: str) -> Check:
+    """Форма итоговой аттестации из запроса методиста."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        form = (p.final_attestation.form or "").lower()
+        hit = any(w.lower() in form for w in words)
+        return hit, f"аттестация: «{p.final_attestation.form or '—'}»"
+
+    return check
+
+
+def attestation_has_criteria(least: int = 1) -> Check:
+    """«с критериями оценки» — отдельная строка в каждом чек-листе."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        got = len(p.final_attestation.criteria)
+        return got >= least, f"критериев аттестации {got}, нужно не меньше {least}"
+
+    return check
+
+
+def questions_have_keys() -> Check:
+    """«Тест содержит вопросы с ключами» — без правильных ответов тест бесполезен."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        broken = [
+            q.id
+            for q in p.test_questions
+            if not q.correct or max(q.correct, default=-1) >= len(q.options)
+        ]
+        return not broken, f"без ключа или с неверным ключом: {len(broken)}"
+
+    return check
+
+
+def questions_linked_to_outcomes() -> Check:
+    """«каждый вопрос привязан к результату обучения»."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        known = {o.id for o in p.outcomes}
+        orphans = [q.id for q in p.test_questions if not (set(q.outcome_ids) & known)]
+        return not orphans, f"вопросов без привязки к РО: {len(orphans)}"
+
+    return check
+
+
+def seminars_have_criteria() -> Check:
+    """«Задания для семинаров с критериями оценки» — обязательный пункт ТЗ."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        without = [s.id for s in p.seminar_tasks if not s.criteria]
+        return not without, f"заданий без критериев: {len(without)} из {len(p.seminar_tasks)}"
+
+    return check
+
+
+def slides_have_content() -> Check:
+    """Слайды должны содержать тезисы, а не пустые заголовки."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        slides = [s for plan in p.lecture_plans for s in plan.slides]
+        empty = [s.title for s in slides if not s.bullets]
+        return bool(slides) and not empty, (
+            f"слайдов {len(slides)}, без тезисов {len(empty)}"
+        )
+
+    return check
+
+
+def self_study_eq(expected: float) -> Check:
+    def check(p: Program) -> tuple[bool, str]:
+        got = p.modules_hours.self_study
+        return abs(got - expected) < 0.01, f"СРС {got:g} ч, ожидалось {expected:g}"
+
+    return check
+
+
+def sessions_schedule(count: int, hours_each: float) -> Check:
+    """«Календарный график состоит из 8 занятий по 2 часа»."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        s = p.schedule
+        ok = s.sessions == count and (s.hours_per_session or 0) == hours_each
+        return ok, (
+            f"график: {s.sessions or '—'} занятий по "
+            f"{s.hours_per_session or '—'} ч, ожидалось {count}×{hours_each:g}"
+        )
+
+    return check
+
+
+def daily_load_at_most(hours: float) -> Check:
+    """«нагрузка не превышает 4 часов в день»."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        got = p.schedule.max_hours_per_day
+        return got is not None and got <= hours, (
+            f"нагрузка в день: {got or '—'} ч, допустимо не больше {hours:g}"
+        )
+
+    return check
+
+
+def months_about(expected: int, tolerance: int = 2) -> Check:
+    """«срок около двух месяцев» — проверяем недели с допуском."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        weeks = p.schedule.weeks
+        want = expected * 4
+        ok = weeks is not None and abs(weeks - want) <= tolerance
+        return ok, f"срок {weeks or '—'} нед., ожидалось около {want}"
+
+    return check
+
+
+def no_unavailable_services() -> Check:
+    """«Все упомянутые ИИ-сервисы доступны в России»."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        hits = [
+            f.message.split("«")[1].split("»")[0]
+            for f in validate_program(p).findings
+            if f.code == "SERVICE_UNAVAILABLE_RU"
+        ]
+        return not hits, f"недоступные сервисы: {', '.join(hits) or 'нет'}"
+
+    return check
+
+
+def sources_marked() -> Check:
+    """«неподтверждённый источник агент должен явно помечать» — требование ТЗ."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        unverified = [
+            s for s in (*p.prof_standards, *p.legal_acts)
+            if s.verification is not VerificationStatus.VERIFIED
+        ]
+        codes = {f.code for f in validate_program(p).findings}
+        ok = not unverified or bool(
+            {"SOURCE_UNVERIFIED", "SOURCES_UNVERIFIED_LIST"} & codes
+        )
+        return ok, (
+            f"неподтверждённых источников {len(unverified)}, "
+            f"{'помечены' if ok else 'НЕ помечены'}"
+        )
+
+    return check
+
+
+def outcomes_count_between(low: int, high: int) -> Check:
+    """Результатов обучения должно быть разумное число для объёма."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        got = len(p.outcomes)
+        return low <= got <= high, f"результатов обучения {got}, ожидалось {low}–{high}"
+
+    return check
+
+
+#: Обещания, которых не бывает за 72 часа. Ищем обороты целиком: слово
+#: «профессиональный» само по себе нормально — «профессиональная деятельность»
+#: встречается в каждой второй программе ПК.
+OVERPROMISE = (
+    "стать специалистом",
+    "стать профессионалом",
+    "полноценным специалистом",
+    "готовым специалистом",
+    "полная подготовка",
+    "стать экспертом",
+    "уровень эксперта",
+    "начать работать по специальности",
+)
+
+
+def no_overpromise() -> Check:
+    """«Не обещай подготовку специалиста за 72 часа» — пункт чек-листа запроса 4."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        text = " ".join(o.text for o in p.outcomes).lower() + " " + p.goal.lower()
+        found = [w for w in OVERPROMISE if w in text]
+        return not found, f"завышенные обещания: {', '.join(found) or 'нет'}"
+
+    return check
+
+
+def exportable(*kinds: str) -> Check:
+    """Комплект выгружается в нужных форматах — требование ТЗ."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        problems: list[str] = []
+        for kind in kinds:
+            try:
+                if kind == "docx":
+                    data = render_docx(p, validate_program(p))
+                    if data[:2] != b"PK":
+                        problems.append("docx")
+                elif kind == "pptx":
+                    if not p.lecture_plans:
+                        problems.append("pptx: нет планов лекций")
+                    elif render_pptx(p, p.lecture_plans)[:2] != b"PK":
+                        problems.append("pptx")
+                elif kind == "gift":
+                    if not render_gift(p).strip():
+                        problems.append("gift")
+                elif kind == "json":
+                    json.dumps(p.model_dump(mode="json"), ensure_ascii=False)
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"{kind}: {exc}")
+        return not problems, f"выгрузки: {', '.join(problems) or 'все собираются'}"
+
+    return check
+
+
+def russian_language() -> Check:
+    """«Материалы готовятся на русском языке» — требование ТЗ."""
+
+    def check(p: Program) -> tuple[bool, str]:
+        text = _all_text(p)
+        cyrillic = sum(1 for ch in text if "а" <= ch <= "я" or ch == "ё")
+        latin = sum(1 for ch in text if "a" <= ch <= "z")
+        ok = cyrillic > latin
+        return ok, f"кириллицы {cyrillic}, латиницы {latin}"
+
+    return check
+
+
 # ----------------------- проверки, общие для всех запросов ----------------- #
 
 
@@ -155,6 +449,15 @@ COMMON: list[tuple[str, Check]] = [
     ("часы сходятся на всех уровнях", hours_consistent()),
     ("каждый РО проверяется двумя средствами", outcomes_double_checked()),
     ("реквизиты приказа оставлены пустыми", order_fields_empty()),
+    # Общие требования из шапки чек-листов и из ТЗ.
+    ("тест с ключами", questions_have_keys()),
+    ("вопросы привязаны к РО", questions_linked_to_outcomes()),
+    ("задания семинаров с критериями", seminars_have_criteria()),
+    content_check("слайды с тезисами, а не пустые", slides_have_content()),
+    ("неподтверждённые источники помечены", sources_marked()),
+    content_check("сервисы доступны в России", no_unavailable_services()),
+    ("материалы на русском языке", russian_language()),
+    ("комплект выгружается", exportable("docx", "pptx", "gift", "json")),
 ]
 
 
@@ -195,6 +498,15 @@ CASES = [
             ("тест на 10 вопросов", questions_count(10)),
             ("слайды для первых двух занятий", slides_for_first_topics(2)),
             ("профстандартов нет", prof_standards(False)),
+            ("график 8 занятий по 2 часа", sessions_schedule(8, 2)),
+            content_check("итоговая аттестация — защита проекта", attestation_is("защит", "проект")),
+            content_check("у аттестации есть критерии", attestation_has_criteria(2)),
+            content_check("темы для нулевого уровня раскрыты",
+             covers_topics(
+                 ("переменн", "тип данных"),
+                 ("услови", "ветвлен", "if", "логическ"),
+                 ("цикл", "for", "while", "повторен"),
+             )),
         ],
     ),
     Case(
@@ -217,6 +529,12 @@ CASES = [
             ("выбран шаблон повышения квалификации", template_is(ProgramType.DPP_PK)),
             ("объём ровно 36 ч", hours_eq(36)),
             ("компетенции связаны с профстандартом", prof_standards(True)),
+            content_check("выдаётся удостоверение о ПК", issued_document_mentions("удостоверение")),
+            content_check("есть тема о рисках и этике",
+             mentions("этик", "риск", "персональн", what="этика и риски")),
+            content_check("аттестация — зачёт по портфолио", attestation_is("портфолио", "зач")),
+            content_check("задания на реальных задачах учителя",
+             mentions("урок", "задани", "проверочн", what="задачи учителя")),
         ],
     ),
     Case(
@@ -239,6 +557,12 @@ CASES = [
             ("выбран шаблон повышения квалификации", template_is(ProgramType.DPP_PK)),
             ("объём ровно 72 ч", hours_eq(72)),
             ("график на 4 недели", weeks_eq(4)),
+            content_check("четыре заявленные темы раскрыты",
+             covers_topics(("pandas",), ("визуализац", "график"), ("sql",), ("статистик",))),
+            content_check("есть вводный блок по основам Python",
+             mentions("основы python", "введение в python", "базов", what="вводный блок")),
+            content_check("итоговый проект на обезличенных данных",
+             mentions("обезличен", "проект", what="итоговый проект")),
         ],
     ),
     Case(
@@ -260,6 +584,9 @@ CASES = [
         },
         checks=[
             ("объём взят из ответа методиста, а не выдуман", hours_eq(72)),
+            content_check("результаты обучения реалистичны для 72 ч", no_overpromise()),
+            ("результатов обучения разумное число", outcomes_count_between(3, 14)),
+            content_check("аттестация с критериями", attestation_has_criteria(1)),
         ],
     ),
     Case(
@@ -283,6 +610,14 @@ CASES = [
             ("объём ровно 256 ч", hours_eq(256)),
             ("аудиторных часов нет", no_contact_hours()),
             ("аттестация занимает 2 ч", attestation_hours_eq(2)),
+            ("254 ч самостоятельной работы", self_study_eq(254)),
+            ("срок около двух месяцев", months_about(2)),
+            ("нагрузка не больше 4 ч в день", daily_load_at_most(4)),
+            content_check("темы покрывают стек DevOps",
+             covers_topics(("linux",), ("сет",), ("контейнер", "docker"),
+                           ("ci/cd", "ci", "непрерывн"), ("мониторинг",))),
+            content_check("отчёт о стажировке с критериями",
+             mentions("отчёт", "отчет", what="отчёт о стажировке")),
         ],
     ),
 ]
@@ -321,8 +656,14 @@ async def run_case(case: Case, provider) -> tuple[int, int]:  # noqa: ANN001
     await build_content(provider, program, test_total=case.tests)
 
     report = validate_program(program)
-    passed = failed = 0
+    offline = provider.name.startswith("mock")
+    passed = failed = skipped = 0
     for title, check in (*case.checks, *COMMON):
+        if offline and title in NEEDS_MODEL:
+            # Заглушка пишет болванки: проверять по ним смысл бессмысленно.
+            print(f"{DIM}  —   {title} (нужна живая модель){OFF}")
+            skipped += 1
+            continue
         ok, detail = check(program)
         mark = f"{GREEN} ok {OFF}" if ok else f"{RED}FAIL{OFF}"
         print(f"{mark}  {title}{DIM} — {detail}{OFF}")

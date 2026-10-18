@@ -228,8 +228,20 @@ def _mock_refresh(user: str) -> dict:
     }
 
 
+def _mock_attestation_criteria(user: str) -> dict:
+    """Структурная заготовка: критерии придумывает живая модель."""
+    return {
+        "criteria": [
+            "работа выполнена самостоятельно и соответствует заданию",
+            "результат воспроизводится по приложенному описанию",
+            "слушатель отвечает на вопросы по содержанию работы",
+        ]
+    }
+
+
 _DISPATCH = {
     "intake": _mock_intake,
+    "attestation_criteria": _mock_attestation_criteria,
     "refresh": _mock_refresh,
     "skeleton": _mock_skeleton,
     "adapt": _mock_adapt,

@@ -36,6 +36,9 @@ class ProgramRequest(BaseModel):
     min_practice_share: float | None = None
     no_contact_hours: bool = False
     constraints: list[str] = Field(default_factory=list)
+    #: Темы и инструменты, прямо названные методистом. Пропустить их нельзя:
+    #: «основные темы это pandas, визуализация, SQL» — это задание, а не пожелание.
+    must_cover: list[str] = Field(default_factory=list)
     deliverables: list[str] = Field(default_factory=list)
     reference_notes: list[str] = Field(default_factory=list)
 

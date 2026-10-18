@@ -109,6 +109,26 @@ async def fill_topic_content(
 # --------------------------------------------------------------------------- #
 # Тесты
 # --------------------------------------------------------------------------- #
+def _valid_keys(correct: object, options: object) -> list[int]:
+    """Ключи ответа, очищенные от мусора.
+
+    Живой случай: модель вернула вопрос с ключом, указывающим на вариант,
+    которого в списке нет. Такой вопрос нельзя ни проверить, ни загрузить
+    в LMS, поэтому индексы вне диапазона отбрасываем, а если не осталось
+    ни одного — ставим первый вариант и отдаём на проверку методисту.
+    """
+    count = len(options) if isinstance(options, list) else 0
+    keys: list[int] = []
+    for item in correct if isinstance(correct, list) else [correct]:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < count and index not in keys:
+            keys.append(index)
+    return keys or [0]
+
+
 async def generate_tests(
     provider: LLMProvider,
     program: Program,
@@ -171,7 +191,7 @@ async def generate_tests(
                     ] or list(topic.outcome_ids),
                     stem=str(raw.get("stem", "")).strip(),
                     options=[str(o) for o in raw.get("options") or []],
-                    correct=[int(i) for i in raw.get("correct") or [0]],
+                    correct=_valid_keys(raw.get("correct"), raw.get("options")),
                     explanation=str(raw.get("explanation", "") or ""),
                     difficulty=raw.get("difficulty") or "medium",
                 )
@@ -240,7 +260,7 @@ async def _top_up_questions(
                         outcome_ids=list(topic.outcome_ids),
                         stem=str(raw.get("stem", "")).strip(),
                         options=[str(o) for o in raw.get("options") or []],
-                        correct=[int(i) for i in raw.get("correct") or [0]],
+                        correct=_valid_keys(raw.get("correct"), raw.get("options")),
                         explanation=str(raw.get("explanation", "") or ""),
                         difficulty=raw.get("difficulty") or "medium",
                     )
@@ -304,6 +324,91 @@ async def generate_seminars(
                 )
             )
     return usage_total
+
+
+async def ensure_attestation_criteria(provider: LLMProvider, program: Program) -> Usage:
+    """Добрать критерии итоговой аттестации, если модель их не дала.
+
+    «Защита проекта» без критериев — половина требования: методист не сможет
+    ни принять работу, ни объяснить слушателю, что от него хотят. Это пункт
+    эталонных чек-листов, и в живых прогонах он проваливался в трети случаев.
+    Просим модель отдельно и коротко — один дешёвый вызов.
+    """
+    attestation = program.final_attestation
+    if attestation.criteria or not attestation.form:
+        return Usage()
+
+    system = (
+        "SKILL:attestation_criteria\n\n"
+        "Ты методист АЦР. Сформулируй критерии оценки итоговой аттестации.\n"
+        "Правила:\n"
+        "1. От 3 до 5 критериев, каждый проверяемый: по нему можно принять "
+        "или не принять работу.\n"
+        "2. Формулируй под аудиторию программы, без общих слов вроде "
+        "«качественно выполнено».\n"
+        '3. Отвечай ТОЛЬКО JSON: {"criteria": ["...", "..."]}'
+    )
+    user = (
+        f"Программа: {program.meta.title} ({program.meta.total_hours:g} ак. ч)\n"
+        f"Аудитория: {program.meta.audience or '—'}\n"
+        f"Форма аттестации: {attestation.form}\n"
+        f"Описание: {attestation.description or '—'}"
+    )
+    try:
+        data, usage = await provider.complete_json(system=system, user=user, max_tokens=700)
+    except Exception:  # noqa: BLE001 — без критериев автопроверка всё равно предупредит
+        return Usage()
+
+    attestation.criteria = [
+        str(item["title"]).strip()
+        for item in as_dicts(data.get("criteria"), key="title")
+        if str(item.get("title", "")).strip()
+    ][:5]
+    return usage
+
+
+async def replace_unavailable_services(
+    provider: LLMProvider,
+    program: Program,
+    say: Callable[[str, str], None] | None = None,
+) -> Usage:
+    """Переписать темы, где упомянуты недоступные в России сервисы.
+
+    Правило есть в навыках, но модель про него забывает: в живых прогонах
+    ChatGPT всплывал в двух случаях из трёх. Чек-лист кейса требует, чтобы
+    таких сервисов в программе не было, поэтому агент не просто помечает
+    находку, а переписывает затронутые темы — один вызов на тему.
+    """
+    from app.core.validate import UNAVAILABLE_SERVICES
+
+    affected: list[tuple[Topic, list[str]]] = []
+    for topic in program.all_topics():
+        text = f"{topic.title} {topic.content} {topic.activities}".lower()
+        found = [s for s in UNAVAILABLE_SERVICES if s in text]
+        if found:
+            affected.append((topic, found))
+    if not affected:
+        return Usage()
+
+    if say:
+        say("content", f"Замена недоступных сервисов в {len(affected)} темах")
+
+    usage = Usage()
+    for topic, found in affected:
+        replacements = "; ".join(f"{s} → {UNAVAILABLE_SERVICES[s]}" for s in found)
+        module = next(m for m in program.modules if topic in m.topics)
+        usage += await fill_topic_content(
+            provider,
+            program,
+            module,
+            topic,
+            instruction=(
+                f"В этой теме упомянуты сервисы, недоступные в России напрямую. "
+                f"Перепиши содержание, заменив их: {replacements}. "
+                f"Структуру и объём темы сохрани."
+            ),
+        )
+    return usage
 
 
 # --------------------------------------------------------------------------- #
@@ -460,6 +565,8 @@ async def build_content(
     else:
         slide_topics = topics[:MIN_SLIDE_TOPICS]
     link_outcomes_to_assessments(program)
+    usage += await ensure_attestation_criteria(provider, program)
+    usage += await replace_unavailable_services(provider, program, say)
 
     say("lectures", f"Планы лекций и слайды ({len(slide_topics)} тем)")
     usage += await generate_lectures(provider, program, slide_topics)

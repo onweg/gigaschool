@@ -41,7 +41,8 @@ _NUM = r"(\d+|" + "|".join(_NUM_WORDS) + r")"
 _SESSIONS = re.compile(
     rf"по\s*{_NUM}\s*час\w*\s*{_NUM}\s*раз\w*\s*в\s*недел", re.IGNORECASE
 )
-_MONTHS = re.compile(r"(\d+)\s*месяц", re.IGNORECASE)
+#: Срок словами встречается не реже, чем цифрой: «около двух месяцев».
+_MONTHS = re.compile(rf"{_NUM}\s*месяц", re.IGNORECASE)
 #: Объём программы. Кандидатов может быть несколько («16 часов», «по 2 часа
 #: два раза в неделю», «не больше 4 часов в день»), поэтому отбрасываем те,
 #: что стоят после «по», «до», «не больше» — это нагрузка занятия, не объём.
@@ -102,7 +103,7 @@ def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
     if m := _WEEKS.search(text):
         request.weeks = int(m.group(1))
     if m := _MONTHS.search(text):
-        request.weeks = request.weeks or int(m.group(1)) * 4
+        request.weeks = request.weeks or _as_number(m.group(1)) * 4
     if m := _DAYS.search(text):
         request.days = int(m.group(1))
     if m := _PER_DAY.search(text):
@@ -174,6 +175,9 @@ async def run_intake(
         request.min_practice_share = float(mps)
     request.no_contact_hours = bool(data.get("no_contact_hours", False))
     request.constraints = [str(c) for c in data.get("constraints") or []]
+    request.must_cover = [
+        str(x).strip() for x in data.get("must_cover") or [] if str(x).strip()
+    ]
     request.deliverables = [str(d) for d in data.get("deliverables") or []]
 
     parse_schedule_hints(request_text, request)

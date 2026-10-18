@@ -141,6 +141,18 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                              f"в учебном плане не ставят",
                     )
 
+    # Форма аттестации без критериев — половина требования: методист не
+    # сможет ни принять работу, ни объяснить слушателю, что от него хотят.
+    if program.final_attestation.form and not program.final_attestation.criteria:
+        report.add(
+            "ATTESTATION_NO_CRITERIA",
+            Severity.WARNING,
+            f"У итоговой аттестации «{program.final_attestation.form}» "
+            f"не заданы критерии оценки",
+            path="final_attestation.criteria",
+            hint="Добавить 3-5 критериев: по ним принимают работу и объясняют "
+                 "слушателю требования",
+        )
     if program.final_attestation.hours <= 0:
         report.add(
             "ATTESTATION_HOURS",

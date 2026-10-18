@@ -31,7 +31,10 @@ system: |
      Пример замены: ChatGPT → GigaChat или YandexGPT; Midjourney →
      Kandinsky или Шедеврум; Notion → Яндекс Документы; Google Colab →
      Jupyter или DataSphere; GitHub Copilot → GigaCode.
-  9. Отвечай ТОЛЬКО JSON по схеме, без markdown.
+  9. У итоговой аттестации ОБЯЗАТЕЛЬНО заполни criteria — 3-5 критериев
+     оценки, по которым принимают работу. «Защита проекта» без критериев
+     не принимается методистом.
+  10. Отвечай ТОЛЬКО JSON по схеме, без markdown.
 
   Схема ответа:
   {

@@ -119,3 +119,35 @@ async def test_model_answer_wins_over_text_when_present() -> None:
 
     assert intake.request.total_hours == 144
     assert intake.request.study_form is StudyForm.DISTANT
+
+
+class GigaChatLikeProvider(LLMProvider):
+    """Воспроизводит живое поведение GigaChat на запросах 2 и 3.
+
+    Модель вернула всё, кроме формы обучения, хотя в запросе написано
+    «очно-заочно». На проде это валило сборку каркаса:
+    «после ответов всё ещё не хватает: ['study_form']».
+    """
+
+    name = "gigachat-like"
+    model = "gigachat-like"
+
+    async def complete(self, **kwargs) -> Completion:  # noqa: ANN003
+        return Completion(
+            text='{"title": "Программа", "program_type": "dpp_pk", '
+                 '"program_type_confidence": 0.9, "total_hours": 36, '
+                 '"audience": "учителя школ", "entry_level": "без программирования", '
+                 '"attestation_form": "зачёт по портфолио"}',
+            usage=Usage(),
+            model="gigachat-like",
+        )
+
+
+@pytest.mark.anyio
+async def test_missing_study_form_is_recovered_from_text() -> None:
+    """Регресс с ВМ: модель не дала форму обучения — берём из текста запроса."""
+    intake, _ = await run_intake(GigaChatLikeProvider(), REQUESTS[2])
+
+    assert intake.request.study_form is StudyForm.PART_TIME
+    assert "study_form" not in [q.field for q in intake.questions]
+    assert intake.request.ready(), "каркас должен собираться без лишних вопросов"

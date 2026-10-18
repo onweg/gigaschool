@@ -96,6 +96,13 @@ async def fill_topic_content(
     )
     topic.content = str(data.get("content", "") or "").strip()
     topic.activities = str(data.get("activities", "") or "").strip()
+    # Переименование по просьбе методиста: «замени тему 2.3 на оконные функции».
+    # Без пожелания название не трогаем — модель любит переписывать заголовки
+    # просто так, а код темы и ссылки на неё завязаны на номер, не на текст.
+    if instruction:
+        new_title = str(data.get("title", "") or "").strip()
+        if new_title and new_title != topic.title:
+            topic.title = new_title
     return usage
 
 

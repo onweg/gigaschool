@@ -125,3 +125,60 @@ def test_hours_stay_exact_after_patch() -> None:
         if f["severity"] == "error" and f["code"].startswith("HOURS_")
     ]
     assert not codes, codes
+
+
+class RenamingProvider(LLMProvider):
+    """Модель, которая по просьбе методиста предлагает новое название темы."""
+
+    name = "renaming"
+    model = "renaming"
+
+    def __init__(self) -> None:
+        from app.llm.mock import MockProvider
+
+        self.inner = MockProvider()
+
+    async def complete(self, *, system: str, user: str, **kwargs):  # noqa: ANN003, ANN201
+        if "SKILL:topic_content" in system:
+            return Completion(
+                text='{"content": "Оконные функции: OVER, PARTITION BY.", '
+                     '"activities": "ПР: практикум", "title": "Оконные функции SQL"}',
+                usage=Usage(),
+                model=self.name,
+            )
+        return await self.inner.complete(system=system, user=user, **kwargs)
+
+
+def test_model_renames_topic_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """«Переименуй тему» словами — без ручной правки поля с названием."""
+    session_id, program = _ready_session()
+    topic_id = program["modules"][0]["topics"][0]["id"]
+
+    monkeypatch.setattr("app.main.provider", RenamingProvider())
+    body = client.post(
+        f"/api/sessions/{session_id}/topics/{topic_id}/regenerate",
+        json={"instruction": "переименуй тему под оконные функции SQL"},
+    ).json()
+
+    topic = next(
+        t for m in body["program"]["modules"] for t in m["topics"] if t["id"] == topic_id
+    )
+    assert topic["title"] == "Оконные функции SQL"
+
+
+def test_title_is_left_alone_without_instruction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Без пожелания название не трогаем, даже если модель его прислала."""
+    session_id, program = _ready_session()
+    topic = program["modules"][0]["topics"][0]
+    original = topic["title"]
+
+    monkeypatch.setattr("app.main.provider", RenamingProvider())
+    body = client.post(
+        f"/api/sessions/{session_id}/topics/{topic['id']}/regenerate",
+        json={"regenerate_tests": False},
+    ).json()
+
+    after = next(
+        t for m in body["program"]["modules"] for t in m["topics"] if t["id"] == topic["id"]
+    )
+    assert after["title"] == original

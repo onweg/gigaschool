@@ -49,8 +49,10 @@
       Правило в навыках плюс проверка кодом `SERVICE_UNAVAILABLE_RU`: промпт
       модель забывает, а замечание методист увидит в отчёте и в `.docx`.
       `skills/*.yaml`, `core/validate.py`, `tests/test_services_availability.py`
-- [ ] **13. Шрифты локально** — интерфейс грузит Inter и JetBrains Mono
-      с `fonts.googleapis.com`; в закрытом контуре не загрузятся
+- [x] **13. Шрифты локально** — интерфейс грузил Inter и JetBrains Mono
+      с `fonts.googleapis.com`. Теперь они в сборке (192 КБ, только нужные
+      начертания и наборы символов), внешних запросов у страницы нет.
+      `index.html`, `src/main.tsx`, `nginx.conf`
 
 ## Сверх плана
 

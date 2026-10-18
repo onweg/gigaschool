@@ -27,6 +27,7 @@ from app.metrics import db, record
 from app.metrics.api import router as metrics_router
 from app.core.hours import rebalance_topics, split_exact
 from app.core.validate import validate_program
+from app.pipeline.adapt import adapt_program
 from app.pipeline.content import (
     build_content,
     fill_topic_content,
@@ -40,8 +41,9 @@ from app.pipeline.skeleton import build_skeleton
 from app.render.docx_acr import render_docx
 from app.render.lms import render_gift, render_tests_csv
 from app.render.pptx_slides import render_pptx
-from app.schemas.ir import Hours
-from app.schemas.request import ClarifyingQuestion
+from app.schemas.ir import Hours, ProgramType as ProgramTypeIn, StudyForm as StudyFormIn
+from app.schemas.ir import Program
+from app.schemas.request import ClarifyingQuestion, ProgramRequest as ClarifyingRequest
 from app.skills import list_skills
 from app.store import Session, Stage, store
 
@@ -126,6 +128,18 @@ class GenerateIn(BaseModel):
     slides_modules: list[int] | None = None
 
 
+class AdaptIn(BaseModel):
+    """Новые условия для готовой программы. Пустые поля берутся из исходной."""
+
+    audience: str = ""
+    total_hours: float | None = None
+    program_type: ProgramTypeIn | None = None
+    study_form: StudyFormIn | None = None
+    entry_level: str = ""
+    title: str = ""
+    attestation_form: str = ""
+
+
 class TopicPatchIn(BaseModel):
     """Точечная доработка темы. `instruction` — пожелание методиста обычным
     текстом: «усложни тест», «меньше теории», «добавь примеры из банков»."""
@@ -191,6 +205,29 @@ def _record_run(
     )
 
 
+def _request_from_program(program: Program) -> ClarifyingRequest:
+    """Восстановить параметры запроса по собранной программе.
+
+    Нужно адаптации: новая сессия должна выглядеть как обычная — с теми же
+    параметрами, иначе следующий шаг (генерация содержания) не поймёт,
+    для кого пишет.
+    """
+    meta = program.meta
+    return ClarifyingRequest(
+        title=meta.title,
+        program_type=meta.program_type,
+        program_type_confidence=1.0,
+        direction=meta.direction,
+        total_hours=meta.total_hours,
+        audience=meta.audience,
+        entry_level=meta.entry_level,
+        study_form=meta.study_form,
+        uses_dot=meta.uses_dot,
+        attestation_form=program.final_attestation.form or None,
+        attestation_hours=program.final_attestation.hours or None,
+    )
+
+
 def _state(session: Session) -> dict[str, Any]:
     return {
         "id": session.id,
@@ -202,6 +239,7 @@ def _state(session: Session) -> dict[str, Any]:
         "report": session.report.model_dump(mode="json") if session.report else None,
         "report_summary": session.report.summary() if session.report else None,
         "events": [e.model_dump(mode="json") for e in session.events],
+        "messages": [m.model_dump(mode="json") for m in session.messages],
         "timings": session.timings,
         "phase": session.phase,
         "phase_started_at": (
@@ -691,6 +729,77 @@ def _exported(
         size=len(payload),
     )
     return Response(payload, media_type=media_type, headers=_disposition(slug, ext))
+
+
+# --------------------------------------------------------------------------- #
+# Адаптация готовой программы
+# --------------------------------------------------------------------------- #
+@app.post("/api/sessions/{session_id}/adapt")
+async def adapt(session_id: str, payload: AdaptIn, request: Request) -> dict:
+    """Переработать готовую программу под другую аудиторию или объём.
+
+    Требование кейса «сверх плана». Исходная программа остаётся нетронутой:
+    по ней ещё учатся, а методисту нужны обе. Поэтому адаптация создаётся
+    отдельной сессией — со своим каркасом, автопроверкой и выгрузками.
+    """
+    source = _session_or_404(session_id)
+    if source.program is None:
+        raise HTTPException(409, "нечего адаптировать: программа ещё не собрана")
+
+    changes = {
+        key: value
+        for key, value in payload.model_dump(exclude_none=True).items()
+        if value != ""
+    }
+    if not changes:
+        raise HTTPException(400, "не указано, что менять: аудитория, объём, тип или форма")
+
+    target = store.create()
+    target.device_id = _device(request)
+    current_session.set(target.id)
+    target.references = source.references
+    target.say("sys", f"Адаптация программы «{source.program.meta.title}»")
+    target.start_phase("adapt")
+    phase_started = db.now()
+    calls_before, tokens_before = _usage_snapshot(target)
+
+    try:
+        program, notes, usage = await adapt_program(provider, source.program, changes)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        target.stage = Stage.FAILED
+        target.error = str(exc)
+        spent = target.finish_phase()
+        store.save(target)
+        _record_run(target, "adapt", phase_started, spent, False,
+                    calls_before, tokens_before, str(exc))
+        raise HTTPException(502, f"не удалось адаптировать программу: {exc}") from exc
+
+    target.usage.add(usage)
+    target.program = program
+    target.request = _request_from_program(program)
+    target.report = validate_program(program, stage="skeleton")
+    target.stage = Stage.SKELETON
+    spent = target.finish_phase()
+    for note in notes:
+        target.log("adapt", note)
+    target.say(
+        "bot",
+        f"Программа адаптирована за {spent:.1f} с: "
+        + "; ".join(notes[:3])
+        + f". Модулей {len(program.modules)}, {program.grand_total:g} ч.",
+    )
+    store.save(target)
+    _record_run(target, "adapt", phase_started, spent, True, calls_before, tokens_before)
+    record.stage(session_id=target.id, device_id=target.device_id, name="skeleton",
+                 note=f"адаптация из {source.id}")
+    record.findings(session_id=target.id, check_stage="skeleton", report=target.report)
+
+    state = _state(target)
+    state["adapted_from"] = source.id
+    state["changes"] = notes
+    return state
 
 
 # --------------------------------------------------------------------------- #

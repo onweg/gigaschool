@@ -194,9 +194,24 @@ def _mock_lecture(user: str) -> dict:
     }
 
 
+def _mock_adapt(user: str) -> dict:
+    """Адаптация возвращает ту же структуру, что и каркас, плюс список правок.
+
+    Заглушка не разбирает, что именно просили изменить, — параметры новой
+    программы приходят из запроса методиста, а не от модели.
+    """
+    data = _mock_skeleton(user)
+    data["changes"] = [
+        "структура сохранена, часы пересчитаны солвером",
+        "формулировки приведены под новую аудиторию",
+    ]
+    return data
+
+
 _DISPATCH = {
     "intake": _mock_intake,
     "skeleton": _mock_skeleton,
+    "adapt": _mock_adapt,
     "topic_content": _mock_topic_content,
     "tests": _mock_tests,
     "seminars": _mock_seminars,

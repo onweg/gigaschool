@@ -65,6 +65,24 @@ class UsageRecord(BaseModel):
         )
 
 
+#: Сколько реплик держим в сессии: файл на диске не должен пухнуть,
+#: а модели для понимания хватает нескольких последних.
+MAX_MESSAGES = 60
+
+
+class ChatMessage(BaseModel):
+    """Реплика в диалоге методиста с агентом.
+
+    Переписка живёт в сессии, а не во фронте: обновление страницы не должно
+    стирать разговор, и модели нужен контекст — «а теперь то же для модуля 3»
+    понятно только вместе с предыдущими репликами.
+    """
+
+    role: str  # user | bot | sys
+    text: str
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -75,6 +93,7 @@ class Session(BaseModel):
     report: ValidationReport | None = None
     usage: UsageRecord = Field(default_factory=UsageRecord)
     events: list[Event] = Field(default_factory=list)
+    messages: list[ChatMessage] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     device_id: str = ""
     error: str = ""
@@ -86,6 +105,19 @@ class Session(BaseModel):
 
     def log(self, stage: str, message: str, level: str = "info") -> None:
         self.events.append(Event(stage=stage, message=message, level=level))
+
+    def say(self, role: str, text: str) -> None:
+        """Записать реплику. История ограничена: сессия живёт на диске,
+        а старые реплики модели всё равно не нужны."""
+        self.messages.append(ChatMessage(role=role, text=text))
+        if len(self.messages) > MAX_MESSAGES:
+            del self.messages[:-MAX_MESSAGES]
+
+    def recent_dialogue(self, limit: int = 8) -> str:
+        """Последние реплики для промпта — без служебных сообщений."""
+        useful = [m for m in self.messages if m.role in ("user", "bot")][-limit:]
+        names = {"user": "методист", "bot": "агент"}
+        return "\n".join(f"{names[m.role]}: {m.text}" for m in useful)
 
     def start_phase(self, phase: str) -> None:
         self.phase = phase

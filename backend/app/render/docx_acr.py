@@ -51,6 +51,15 @@ PROGRAM_TITLE_RU = {
 
 UNVERIFIED_MARK = " [требует проверки методистом]"
 
+#: Что означает серьёзность находки — словами, а не кодом. Методист получает
+#: документ отдельно от интерфейса, и по нему должно быть понятно, что именно
+#: нужно поправить перед утверждением, а что достаточно перечитать.
+SEVERITY_WORDS = {
+    "error": ("Исправить", "программа не может быть утверждена, пока это не исправлено"),
+    "warning": ("Проверить", "агент не смог подтвердить сам — нужен взгляд методиста"),
+    "info": ("К сведению", "справочно"),
+}
+
 
 def hours_str(value: float) -> str:
     """Часы в документе: целые — без дробной части, как в образцах АЦР."""
@@ -629,15 +638,64 @@ class AcrDocxBuilder:
         self.traceability_appendix()
 
     # ------------------------------ сборка ------------------------------- #
-    def build(self) -> Document:
+    def validation_appendix(self, report) -> None:  # noqa: ANN001 — ValidationReport
+        """Отчёт автопроверки в конце документа.
+
+        Без него методист получает файл и не знает, что в нём агент не сумел
+        подтвердить. Серьёзность пишем словом и сразу говорим, что делать:
+        «Исправить» блокирует утверждение, «Проверить» — нет.
+        """
+        findings = list(report.findings) if report else []
+        self.doc.add_page_break()
+        self.para("ПРИЛОЖЕНИЕ. ОТЧЁТ АВТОПРОВЕРКИ", bold=True, align="center", indent=False)
+        self.para("")
+
+        if not findings:
+            self.para(
+                "Автоматическая проверка замечаний не выявила: суммы часов сходятся "
+                "на всех уровнях, каждый результат обучения раскрыт в темах и "
+                "проверяется оценочными средствами, разделы шаблона заполнены.",
+            )
+            self.para("")
+            self.para(
+                "Реквизиты приказа, ФИО преподавателей и подписи оставлены "
+                "незаполненными: их вносит организация.",
+                italic=True,
+            )
+            return
+
+        errors = [f for f in findings if f.severity.value == "error"]
+        warnings = [f for f in findings if f.severity.value == "warning"]
+        self.para(
+            f"Проверено автоматически. Требует исправления — {len(errors)}, "
+            f"требует проверки методистом — {len(warnings)}.",
+            indent=False,
+        )
+        self.para("")
+
+        rows: list[list[str]] = [["Статус", "Что обнаружено", "Что сделать"]]
+        for finding in (*errors, *warnings):
+            status, _ = SEVERITY_WORDS.get(finding.severity.value, ("Проверить", ""))
+            rows.append([status, finding.message, finding.hint or "—"])
+        self.table(rows, widths=[2.2, 8.3, 5.5])
+
+        self.para("")
+        for severity in ("error", "warning"):
+            if any(f.severity.value == severity for f in findings):
+                word, explanation = SEVERITY_WORDS[severity]
+                self.para(f"«{word}» — {explanation}.", italic=True, indent=False)
+
+    def build(self, report=None) -> Document:  # noqa: ANN001 — ValidationReport
         if self.p.meta.program_type is ProgramType.DPP_PK:
             self.build_dpp_pk()
         else:
             self.build_dop_obsh()
+        self.validation_appendix(report)
         return self.doc
 
 
-def render_docx(program: Program) -> bytes:
+def render_docx(program: Program, report=None) -> bytes:  # noqa: ANN001
+    """Программа по шаблону АЦР. `report` добавляет приложение с автопроверкой."""
     buffer = BytesIO()
-    AcrDocxBuilder(program).build().save(buffer)
+    AcrDocxBuilder(program).build(report).save(buffer)
     return buffer.getvalue()

@@ -851,7 +851,12 @@ async def export(session_id: str, kind: str, request: Request) -> Response:
         raise HTTPException(409, "нечего выгружать: каркас не собран")
     slug = (program.meta.title or "program")[:60].replace("/", "-").strip()
     if kind == "docx":
-        return _exported(session, request, "docx", render_docx(program), DOCX_MIME, slug, "docx")
+        # Отчёт автопроверки едет вместе с документом: методист открывает
+        # файл отдельно от интерфейса и должен видеть, что проверить.
+        return _exported(
+            session, request, "docx",
+            render_docx(program, session.report), DOCX_MIME, slug, "docx",
+        )
     if kind == "pptx":
         if not program.lecture_plans:
             raise HTTPException(409, "слайды ещё не сгенерированы")
@@ -867,9 +872,29 @@ async def export(session_id: str, kind: str, request: Request) -> Response:
             "text/csv; charset=utf-8", slug, "tests.csv",
         )
     if kind == "json":
+        report = session.report
         bundle = {
             "program": program.model_dump(mode="json"),
-            "validation": session.report.model_dump(mode="json") if session.report else None,
+            "validation": report.model_dump(mode="json") if report else None,
+            # Отдельная сводка: в findings серьёзность лежит кодом, а принимать
+            # решение по выгрузке нужно быстро и без чтения всего списка.
+            "validation_summary": {
+                "ok": bool(report and report.ok),
+                "errors": len(report.errors) if report else 0,
+                "warnings": len(report.warnings) if report else 0,
+                "must_fix": [
+                    {"code": f.code, "message": f.message, "hint": f.hint}
+                    for f in (report.errors if report else [])
+                ],
+                "check_yourself": [
+                    {"code": f.code, "message": f.message, "hint": f.hint}
+                    for f in (report.warnings if report else [])
+                ],
+                "legend": {
+                    "errors": "программа не может быть утверждена, пока это не исправлено",
+                    "warnings": "агент не смог подтвердить сам — нужен взгляд методиста",
+                },
+            },
             "economics": session.economics(),
         }
         return _exported(

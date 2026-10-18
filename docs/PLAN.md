@@ -28,8 +28,10 @@
       `tests/test_session_store.py`
 - [x] **5. Токен на метрики** — «эндпоинты метрик не защищены авторизацией».
       Без токена раздел закрыт целиком. `app/metrics/api.py`, `Stats.tsx`
-- [ ] **6. Замечания автопроверки в выгрузках** — «экспорт не содержит
-      пояснений о серьёзности находок». Раздел в `.docx`, сводка в JSON
+- [x] **6. Замечания автопроверки в выгрузках** — «экспорт не содержит
+      пояснений о серьёзности находок». Приложение в `.docx`, сводка
+      `validation_summary` в JSON, подсказка «что сделать» у всех 18 кодов.
+      `render/docx_acr.py`, `core/validate.py`, `tests/test_export_findings.py`
 
 ## Найдено своими руками
 
@@ -57,7 +59,7 @@
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 133 теста, без сети и без денег
+python -m pytest tests -q                   # 140 тестов, без сети и без денег
 python scripts/run_open_requests.py         # 5 запросов кейса с чек-листами
 python scripts/check_topic_patch.py --url <адрес> --session <id>
 ```

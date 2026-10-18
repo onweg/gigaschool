@@ -91,7 +91,7 @@ async def main() -> int:
         print(f"  [{f.code}] {f.message}")
 
     files: dict[str, bytes] = {
-        "program.docx": render_docx(program),
+        "program.docx": render_docx(program, report),
         "program.json": json.dumps(program.model_dump(mode="json"), ensure_ascii=False, indent=2).encode(),
         "tests.gift": render_gift(program).encode("utf-8"),
         "tests.csv": render_tests_csv(program).encode("utf-8-sig"),

@@ -78,6 +78,7 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                 Severity.WARNING,
                 f"Модуль «{module.title}» без тем — часы нечем подтвердить",
                 path=f"modules[{mi}]",
+                hint="Добавить в модуль хотя бы одну тему или удалить пустой модуль",
             )
             continue
         topics_sum = Hours.sum([t.hours for t in module.topics])
@@ -103,6 +104,7 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                 Severity.ERROR,
                 f"Модуль {module.index}: ЛК+ПР+ЛБ+СРС не равно трудоёмкости строки",
                 path=f"modules[{mi}].hours",
+                hint="Исправить часы в строке: сумма по видам работы должна равняться графе «Всего»",
             )
 
     grand = program.grand_total
@@ -114,6 +116,7 @@ def check_hours(program: Program, report: ValidationReport) -> None:
             f"аттестация {program.final_attestation.hours}) ≠ запрошенных "
             f"{program.meta.total_hours} ч",
             path="meta.total_hours",
+            hint="Привести итог к заказанному объёму: поправить часы модуля или итоговой аттестации",
         )
 
     for mi, module in enumerate(program.modules):
@@ -126,6 +129,7 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                         Severity.ERROR,
                         f"Отрицательные часы в теме {topic.code}",
                         path=f"modules[{mi}].topics[{ti}].hours.{kind}",
+                        hint="Отрицательных часов быть не может — задать значение заново",
                     )
                 if abs(val / HOUR_STEP - round(val / HOUR_STEP)) > EPS:
                     report.add(
@@ -133,6 +137,8 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                         Severity.WARNING,
                         f"Тема {topic.code}: {val} ч не кратно {HOUR_STEP} ч",
                         path=f"modules[{mi}].topics[{ti}].hours.{kind}",
+                        hint=f"Округлить до {HOUR_STEP} ч: дробные часы "
+                             f"в учебном плане не ставят",
                     )
 
     if program.final_attestation.hours <= 0:
@@ -141,6 +147,8 @@ def check_hours(program: Program, report: ValidationReport) -> None:
             Severity.ERROR,
             "Итоговой аттестации не выделены часы",
             path="final_attestation.hours",
+            hint="Выделить часы на аттестацию, забрав их у модулей: "
+                 "итог программы должен остаться прежним",
         )
 
 
@@ -157,6 +165,7 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
             Severity.ERROR,
             "Не заданы результаты обучения",
             path="outcomes",
+            hint="Добавить планируемые результаты обучения: без них программу не утвердят",
         )
         return
 
@@ -184,6 +193,8 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
                 "COVERAGE_UNKNOWN_OUTCOME",
                 Severity.ERROR,
                 f"Темы ссылаются на неизвестный результат обучения {oid}",
+                hint="Добавить этот результат обучения в раздел РО "
+                     "или исправить ссылку в теме",
             )
             continue
         if not codes:
@@ -204,6 +215,7 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
                 f"{MIN_ASSESSMENTS_PER_OUTCOME} оценочными средствами "
                 f"(сейчас: {', '.join(sorted(kinds)) or 'нет'})",
                 path="test_questions/seminar_tasks",
+                hint="Добавить тестовый вопрос или задание семинара на этот результат обучения",
             )
 
     for topic in program.all_topics():
@@ -212,6 +224,7 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
                 "COVERAGE_TOPIC_NO_OUTCOME",
                 Severity.WARNING,
                 f"Тема {topic.code} «{topic.title}» не привязана ни к одному РО",
+                hint="Привязать тему к результату обучения или убрать тему из плана",
             )
 
 
@@ -226,6 +239,7 @@ def check_sources(program: Program, report: ValidationReport) -> None:
                 Severity.ERROR,
                 f"Профстандарт {ps.code} не найден в реестре — удалить из программы",
                 path="prof_standards",
+                hint="Источник не найден в реестре — заменить на существующий",
             )
         elif ps.verification is VerificationStatus.UNVERIFIED:
             report.add(
@@ -234,6 +248,8 @@ def check_sources(program: Program, report: ValidationReport) -> None:
                 f"Профстандарт {ps.code} «{ps.title}» не подтверждён реестром — "
                 "в документе печатается с пометкой «требует проверки»",
                 path="prof_standards",
+                hint="Сверить код и название на profstandart.rosmintrud.ru; "
+                     "если профстандарт не подходит — заменить или убрать",
             )
     for act in program.legal_acts:
         if act.verification is not VerificationStatus.VERIFIED:
@@ -242,6 +258,7 @@ def check_sources(program: Program, report: ValidationReport) -> None:
                 Severity.WARNING,
                 f"Нормативный акт «{act.title}» не подтверждён реестром",
                 path="legal_acts",
+                hint="Сверить реквизиты акта с publication.pravo.gov.ru и снять пометку",
             )
     unverified = [s for s in program.sources if s.verification is not VerificationStatus.VERIFIED]
     if unverified:
@@ -251,6 +268,8 @@ def check_sources(program: Program, report: ValidationReport) -> None:
             f"{len(unverified)} из {len(program.sources)} источников требуют "
             "проверки методистом (помечены в документе)",
             path="sources",
+            hint="Проверить выходные данные и актуальность редакции; "
+                 "непроверенные пометки снять после сверки",
         )
 
 
@@ -292,6 +311,7 @@ def check_template(program: Program, report: ValidationReport) -> None:
                 Severity.ERROR,
                 f"Обязательный раздел шаблона не заполнен: {path}",
                 path=path,
+                hint="Заполнить обязательный раздел шаблона АЦР",
             )
 
     if program.meta.program_type is ProgramType.DOP_OBSH and program.prof_standards:
@@ -301,6 +321,7 @@ def check_template(program: Program, report: ValidationReport) -> None:
             "Общеразвивающая программа не требует привязки к профстандартам — "
             "раздел лишний",
             path="prof_standards",
+            hint="Убрать профстандарты: общеразвивающая программа с ними не связывается",
         )
 
     # Реквизиты, которые агент обязан оставить человеку
@@ -310,6 +331,7 @@ def check_template(program: Program, report: ValidationReport) -> None:
             Severity.ERROR,
             "Реквизиты приказа должны остаться пустыми полями для человека",
             path="meta.order_number",
+            hint="Очистить поле: реквизиты приказа, ФИО и подписи вносит организация",
         )
 
 
@@ -331,6 +353,8 @@ def check_schedule(program: Program, report: ValidationReport) -> None:
                 f"= {planned} ч, аудиторная нагрузка плана {classroom} ч "
                 f"(включая итоговую аттестацию)",
                 path="schedule",
+                hint="Согласовать календарный график с планом: изменить число "
+                     "занятий, их длительность или аудиторные часы",
             )
     if s.max_hours_per_day and s.days:
         capacity = s.max_hours_per_day * s.days
@@ -341,6 +365,7 @@ def check_schedule(program: Program, report: ValidationReport) -> None:
                 f"{program.meta.total_hours} ч не укладываются в {s.days} дней "
                 f"по {s.max_hours_per_day} ч/день (ёмкость {capacity} ч)",
                 path="schedule",
+                hint="Согласовать график с объёмом: изменить число занятий, недель или часов в день",
             )
 
 

@@ -7,7 +7,7 @@ import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
-import { api, type AdaptChanges, type ParsedReference, type RefreshResult } from "./lib/api";
+import { api, metricsToken, type AdaptChanges, type ParsedReference, type RefreshResult } from "./lib/api";
 import type { SessionState } from "./lib/types";
 
 const EXPORTS = [
@@ -56,8 +56,17 @@ export function App() {
   // Открытие по прямой ссылке и кнопка «назад» в браузере.
   useEffect(() => {
     const apply = () => {
-      const key = window.location.hash.replace(/^#\/?/, "") as SectionKey;
-      if (key) setSection(key);
+      const key = window.location.hash.replace(/^#\/?/, "").split("?")[0] as SectionKey;
+      if (!key) return;
+      // Статистика закрыта токеном. Если адрес остался в браузере с прошлого
+      // раза, а токена нет, открывать форму ввода вместо главного экрана
+      // незачем: человек пришёл за программой, а не за телеметрией.
+      if (key === "stats" && !metricsToken.get()) {
+        window.location.hash = "";
+        setSection("program");
+        return;
+      }
+      setSection(key);
     };
     apply();
     window.addEventListener("hashchange", apply);

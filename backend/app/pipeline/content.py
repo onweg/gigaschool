@@ -23,6 +23,8 @@ from app.schemas.ir import (
 )
 from app.skills import load_skill
 
+#: Запас сверху: нижний предел всё равно держит семафор провайдера,
+#: который знает про лимит шлюза.
 MAX_PARALLEL = 4
 QUESTIONS_PER_TOPIC = 2
 #: Сколько первых тем получают слайды, когда методист не выбрал модули.

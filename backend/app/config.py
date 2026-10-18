@@ -33,6 +33,9 @@ class Settings(BaseModel):
         "LLM_AUTH_SCHEME", default="Bearer" if os.getenv("OPENAI_API_KEY") else "Api-Key"
     )
     llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "180"))
+    #: Сколько запросов к модели держим одновременно. Шлюз хакатона даёт
+    #: лимит на команду, а не на процесс, и отвечает 429 — там нужно 1–2.
+    llm_max_parallel: int = int(_env("LLM_MAX_PARALLEL", default="2"))
     llm_json_mode: bool = os.getenv("LLM_JSON_MODE", "1") == "1"
     # Стоимость токенов для расчёта экономики генерации (руб. за 1000 токенов)
     price_prompt_per_1k: float = float(os.getenv("PRICE_PROMPT_PER_1K", "0.20"))
@@ -68,5 +71,6 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             timeout=s.llm_timeout,
             name=s.llm_provider or "openai_compat",
             supports_json_mode=s.llm_json_mode,
+            max_parallel=s.llm_max_parallel,
         )
     return MockProvider()

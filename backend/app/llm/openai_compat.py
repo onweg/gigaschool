@@ -8,9 +8,15 @@
 """
 from __future__ import annotations
 
+import asyncio
+import random
+
 import httpx
 
 from app.llm.base import Completion, LLMError, LLMProvider, Usage
+
+#: Коды, после которых есть смысл повторить: перегруз шлюза и лимит запросов.
+RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -25,6 +31,8 @@ class OpenAICompatProvider(LLMProvider):
         name: str = "openai-compat",
         supports_json_mode: bool = True,
         extra_headers: dict[str, str] | None = None,
+        max_parallel: int = 4,
+        max_retries: int = 5,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -34,6 +42,11 @@ class OpenAICompatProvider(LLMProvider):
         self.name = name
         self.supports_json_mode = supports_json_mode
         self.extra_headers = extra_headers or {}
+        self.max_retries = max_retries
+        # Шлюз площадки отвечает 429 «too many concurrent requests from this
+        # team»: лимит общий на команду, а не на процесс. Поэтому ограничиваем
+        # одновременные запросы здесь — выше по стеку об этом знать не нужно.
+        self._gate = asyncio.Semaphore(max_parallel)
 
     async def complete(
         self,
@@ -61,15 +74,7 @@ class OpenAICompatProvider(LLMProvider):
             "Content-Type": "application/json",
             **self.extra_headers,
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions", json=payload, headers=headers
-            )
-            if response.status_code >= 400:
-                raise LLMError(
-                    f"{self.name}: HTTP {response.status_code} — {response.text[:500]}"
-                )
-            data = response.json()
+        data = await self._post(payload, headers)
 
         try:
             text = data["choices"][0]["message"]["content"]
@@ -84,3 +89,29 @@ class OpenAICompatProvider(LLMProvider):
             ),
             model=data.get("model", self.model),
         )
+
+    async def _post(self, payload: dict, headers: dict) -> dict:
+        """POST с повтором при перегрузе шлюза.
+
+        Лимит у площадки общий на команду, поэтому отказ — обычное дело, а не
+        поломка: ждём и пробуем снова. Пауза растёт вдвое с каждой попыткой,
+        со случайной добавкой, иначе параллельные задачи синхронно долбятся
+        в одну и ту же секунду и снова получают 429.
+        """
+        last = ""
+        for attempt in range(self.max_retries):
+            async with self._gate:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions", json=payload, headers=headers
+                    )
+                if response.status_code < 400:
+                    return response.json()
+                last = f"HTTP {response.status_code} — {response.text[:300]}"
+                if response.status_code not in RETRYABLE:
+                    raise LLMError(f"{self.name}: {last}")
+                # Сервер может сам сказать, сколько ждать.
+                after = response.headers.get("retry-after")
+            delay = float(after) if after and after.isdigit() else 2**attempt
+            await asyncio.sleep(min(delay, 30) + random.uniform(0, 0.5))
+        raise LLMError(f"{self.name}: {last} (после {self.max_retries} попыток)")

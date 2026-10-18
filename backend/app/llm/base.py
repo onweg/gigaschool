@@ -101,15 +101,23 @@ def extract_json(text: str) -> dict:
     if fenced:
         text = fenced.group(1).strip()
     try:
-        data = json.loads(text)
+        data = json.loads(text, strict=False)
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
             raise ValueError("в ответе нет JSON-объекта") from None
+        chunk = text[start : end + 1]
         try:
-            data = json.loads(text[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"битый JSON: {exc.msg} (поз. {exc.pos})") from None
+            data = json.loads(chunk)
+        except json.JSONDecodeError as first:
+            # Модели вставляют в строки сырые переводы строк и табуляции —
+            # по стандарту их положено экранировать, и парсер падает с
+            # «Invalid control character». Смысл ответа при этом цел, поэтому
+            # повторяем в нестрогом режиме, где такие символы разрешены.
+            try:
+                data = json.loads(chunk, strict=False)
+            except json.JSONDecodeError:
+                raise ValueError(f"битый JSON: {first.msg} (поз. {first.pos})") from None
     if not isinstance(data, dict):
         raise ValueError("ожидался JSON-объект")
     return data

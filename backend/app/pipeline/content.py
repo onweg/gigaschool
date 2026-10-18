@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Awaitable, Callable
 
 from app.llm.base import LLMProvider, Usage
@@ -24,6 +25,9 @@ from app.skills import load_skill
 
 MAX_PARALLEL = 4
 QUESTIONS_PER_TOPIC = 2
+#: Сколько первых тем получают слайды, когда методист не выбрал модули.
+#: Эталонный чек-лист кейса просит слайды «для первых двух занятий».
+MIN_SLIDE_TOPICS = 2
 
 
 def _outcomes_block(program: Program, topic: Topic) -> str:
@@ -151,6 +155,72 @@ async def generate_tests(
             )
     if total and len(program.test_questions) > total:
         del program.test_questions[total:]
+
+    # Модель регулярно возвращает меньше вопросов, чем просили (GigaChat на
+    # «тест из 10 вопросов» отдал 4). Добираем недостающее повторным вызовом
+    # по темам, где вопросов меньше квоты: число вопросов — требование
+    # методиста, а не пожелание.
+    if total:
+        usage_total += await _top_up_questions(provider, program, topics, quotas, counter)
+    return usage_total
+
+
+async def _top_up_questions(
+    provider: LLMProvider,
+    program: Program,
+    topics: list[Topic],
+    quotas: list[int],
+    start_counter: int,
+    *,
+    attempts: int = 2,
+) -> Usage:
+    """Добрать вопросы до квоты по каждой теме. Молча сдаваться нельзя."""
+    skill = load_skill("tests")
+    usage_total = Usage()
+    counter = start_counter
+
+    for _ in range(attempts):
+        have = Counter(q.topic_id for q in program.test_questions)
+        debts = [(t, q - have[t.id]) for t, q in zip(topics, quotas) if q - have[t.id] > 0]
+        if not debts:
+            break
+
+        async def one(topic: Topic, count: int) -> tuple[Topic, dict, Usage]:
+            data, usage = await provider.complete_json(
+                system=skill.system,
+                user=skill.render_user(
+                    program_title=program.meta.title,
+                    audience=program.meta.audience or "—",
+                    topic_code=topic.code,
+                    topic_title=topic.title,
+                    topic_content=topic.content or topic.title,
+                    outcomes_block=_outcomes_block(program, topic),
+                    count=count,
+                ),
+                max_tokens=2500,
+            )
+            return topic, data, usage
+
+        for result in await _bounded([one(t, n) for t, n in debts]):
+            if isinstance(result, BaseException):
+                continue
+            topic, data, usage = result
+            usage_total += usage
+            debt = dict(debts).get(topic, 0)
+            for raw in as_dicts(data.get("questions"), key="text")[:debt]:
+                counter += 1
+                program.test_questions.append(
+                    TestQuestion(
+                        id=f"Q-{counter}",
+                        topic_id=topic.id,
+                        outcome_ids=list(topic.outcome_ids),
+                        stem=str(raw.get("stem", "")).strip(),
+                        options=[str(o) for o in raw.get("options") or []],
+                        correct=[int(i) for i in raw.get("correct") or [0]],
+                        explanation=str(raw.get("explanation", "") or ""),
+                        difficulty=raw.get("difficulty") or "medium",
+                    )
+                )
     return usage_total
 
 
@@ -205,13 +275,69 @@ async def generate_seminars(
 
 
 # --------------------------------------------------------------------------- #
+# Покрытие результатов обучения
+# --------------------------------------------------------------------------- #
+def link_outcomes_to_assessments(program: Program) -> int:
+    """Довести каждый РО до двух видов проверки, не обращаясь к модели.
+
+    Чек-лист кейса требует, чтобы результат обучения проверялся тестом и
+    заданием семинара. Модель сама расставляет `outcome_ids` и регулярно
+    забывает часть РО — хотя вопрос по теме, раскрывающей этот РО, его по
+    сути и проверяет. Поэтому связь восстанавливается арифметикой: берём
+    оценочные средства темы, где РО раскрыт, и дописываем ему привязку.
+
+    Возвращает число исправленных связей — для журнала и отчёта.
+    """
+    topics_by_outcome: dict[str, list[str]] = {o.id: [] for o in program.outcomes}
+    for topic in program.all_topics():
+        for oid in topic.outcome_ids:
+            if oid in topics_by_outcome:
+                topics_by_outcome[oid].append(topic.id)
+
+    # Задания семинаров генерируются только для тем с практическими часами,
+    # поэтому у чисто лекционной темы своего задания может не быть. Тогда
+    # годится задание соседней темы того же модуля: оно проверяет результаты
+    # того же раздела программы.
+    module_of_topic = {t.id: m.index for m in program.modules for t in m.topics}
+    topics_of_module: dict[int, set[str]] = {}
+    for topic_id, module_index in module_of_topic.items():
+        topics_of_module.setdefault(module_index, set()).add(topic_id)
+
+    fixed = 0
+    for outcome in program.outcomes:
+        topic_ids = topics_by_outcome.get(outcome.id) or []
+        if not topic_ids:
+            # РО не раскрыт ни одной темой — это ошибка каркаса, её ловит
+            # автопроверка кодом COVERAGE_OUTCOME_NO_TOPIC. Здесь не чиним.
+            continue
+        # Темы самого РО — в первую очередь, темы его модулей — запасной круг.
+        fallback = {
+            tid
+            for topic_id in topic_ids
+            for tid in topics_of_module.get(module_of_topic.get(topic_id, -1), set())
+        }
+        for items in (program.test_questions, program.seminar_tasks):
+            if any(outcome.id in item.outcome_ids for item in items):
+                continue
+            for scope in (set(topic_ids), fallback):
+                target = next((i for i in items if i.topic_id in scope), None)
+                if target is not None:
+                    target.outcome_ids.append(outcome.id)
+                    fixed += 1
+                    break
+    return fixed
+
+
+# --------------------------------------------------------------------------- #
 # Лекции и слайды
 # --------------------------------------------------------------------------- #
 async def generate_lectures(
     provider: LLMProvider, program: Program, topics: list[Topic]
 ) -> Usage:
     skill = load_skill("lecture")
-    lecture_topics = [t for t in topics if t.hours.lectures > 0] or topics[:1]
+    # Тема без лекционных часов всё равно получает план занятия: методист
+    # просил слайды к конкретным занятиям, а не к строкам «ЛК» учебного плана.
+    lecture_topics = topics
 
     async def one(topic: Topic) -> tuple[Topic, dict, Usage]:
         data, usage = await provider.complete_json(
@@ -293,13 +419,16 @@ async def build_content(
     say("seminars", "Задания для семинаров с критериями")
     usage += await generate_seminars(provider, program, topics)
 
-    target_modules = slides_modules or [program.modules[0].index] if program.modules else []
-    slide_topics = [
-        t
-        for m in program.modules
-        if m.index in target_modules
-        for t in m.topics
-    ]
+    # Слайды методист просит по занятиям («для первых двух занятий»), а не по
+    # модулям: сколько тем попало в первый модуль — решает модель, и на это
+    # опираться нельзя. Поэтому берём первые MIN_SLIDE_TOPICS тем подряд,
+    # а явный выбор модулей из интерфейса по-прежнему уважаем.
+    if slides_modules:
+        slide_topics = [t for m in program.modules if m.index in slides_modules for t in m.topics]
+    else:
+        slide_topics = topics[:MIN_SLIDE_TOPICS]
+    link_outcomes_to_assessments(program)
+
     say("lectures", f"Планы лекций и слайды ({len(slide_topics)} тем)")
     usage += await generate_lectures(provider, program, slide_topics)
     return usage

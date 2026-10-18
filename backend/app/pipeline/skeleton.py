@@ -241,6 +241,15 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
     module_weights = [float(m.get("weight", 1) or 1) for m in raw_modules]
     module_totals = distribute_modules(total, attestation_hours, module_weights, grain)
 
+    # «Практики не меньше половины всех часов» методист считает от полного
+    # объёма программы, а раскладываем мы только часы модулей: аттестация
+    # практикой не считается. Поэтому долю пересчитываем на часы модулей,
+    # иначе на 16 ч выходит 7 ч вместо требуемых 8.
+    module_share = request.min_practice_share
+    if module_share is not None:
+        modules_total = sum(module_totals)
+        module_share = min(1.0, total * module_share / modules_total) if modules_total else None
+
     modules: list[Module] = []
     for idx, (raw, module_total) in enumerate(zip(raw_modules, module_totals), start=1):
         mix = _mix_weights(as_dict(raw.get("mix")), request)
@@ -250,7 +259,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
             practice=mix["practice"],
             labs=mix["labs"],
             self_study=mix["self_study"],
-            min_practice_share=request.min_practice_share,
+            min_practice_share=module_share,
             grain=grain,
         )
         raw_topics = as_dicts(raw.get("topics")) or [{"title": raw.get("title", ""), "weight": 1}]

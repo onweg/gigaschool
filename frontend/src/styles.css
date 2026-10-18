@@ -684,3 +684,46 @@ tr.clickable:hover td { background: var(--surface-3); }
   background: var(--surface-2);
   border-radius: 6px;
 }
+
+/* ------------------------------------------------- адаптация программы */
+/* Отдельный сценарий, а не ежедневное действие: форма свёрнута, пока
+   методист сам её не раскроет. */
+.adapt-box {
+  margin: 18px 0 20px;
+  padding: 16px 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.adapt-lede { margin-bottom: 14px; font-size: 13px; color: var(--muted); }
+.adapt-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.adapt-fields label {
+  flex: 1 1 180px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.adapt-fields input,
+.adapt-fields select {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.adapt-fields input:focus,
+.adapt-fields select:focus { outline: none; border-color: var(--green); }
+.adapt-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}

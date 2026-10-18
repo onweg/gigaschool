@@ -7,7 +7,7 @@ import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
-import { api, type ParsedReference } from "./lib/api";
+import { api, type AdaptChanges, type ParsedReference } from "./lib/api";
 import type { SessionState } from "./lib/types";
 
 const SAMPLES = [
@@ -256,6 +256,36 @@ export function App() {
     if (!started) return;
     setSession(started);
     say("bot", "Собираю содержание: темы, тесты с ключами, задания семинаров, слайды.");
+  }
+
+  // Адаптация: готовую программу переносим на новые условия. Форма прячется
+  // по умолчанию — это не ежедневное действие, а отдельный сценарий.
+  const [adaptOpen, setAdaptOpen] = useState(false);
+  const [adaptTo, setAdaptTo] = useState<{ audience: string; hours: string; type: string }>({
+    audience: "",
+    hours: "",
+    type: "",
+  });
+
+  async function runAdapt() {
+    if (!session?.program) return;
+    const changes: AdaptChanges = {};
+    if (adaptTo.audience.trim()) changes.audience = adaptTo.audience.trim();
+    if (adaptTo.hours.trim()) changes.total_hours = Number(adaptTo.hours);
+    if (adaptTo.type) changes.program_type = adaptTo.type as AdaptChanges["program_type"];
+    if (!Object.keys(changes).length) return;
+
+    say("user", "Адаптируй программу: " + Object.values(changes).join(", "));
+    const next = await guard("adapt", () => api.adapt(session.id, changes));
+    if (!next) return;
+    setSession(next);
+    setAdaptOpen(false);
+    setAdaptTo({ audience: "", hours: "", type: "" });
+    setSection("plan");
+    say(
+      "bot",
+      "Программа адаптирована, исходная сохранена. " + next.changes.slice(0, 4).join("; ")
+    );
   }
 
   async function regenerate(topicId: string, instruction = "", title = "") {
@@ -521,6 +551,72 @@ export function App() {
                       </span>
                     )}
                   </div>
+                  {session?.program && (
+                    <div className="adapt-box">
+                      {!adaptOpen ? (
+                        <button className="btn ghost" onClick={() => setAdaptOpen(true)}>
+                          Адаптировать под другую аудиторию или объём
+                        </button>
+                      ) : (
+                        <>
+                          <div className="adapt-lede">
+                            Переработаем эту программу под новые условия. Текущая
+                            останется нетронутой — по ней ещё учатся.
+                          </div>
+                          <div className="adapt-fields">
+                            <label>
+                              Аудитория
+                              <input
+                                value={adaptTo.audience}
+                                onChange={(e) =>
+                                  setAdaptTo({ ...adaptTo, audience: e.target.value })
+                                }
+                                placeholder={session.program.meta.audience || "кто учится"}
+                              />
+                            </label>
+                            <label>
+                              Объём, ак. ч
+                              <input
+                                type="number"
+                                min={16}
+                                step={2}
+                                value={adaptTo.hours}
+                                onChange={(e) =>
+                                  setAdaptTo({ ...adaptTo, hours: e.target.value })
+                                }
+                                placeholder={String(session.program.meta.total_hours)}
+                              />
+                            </label>
+                            <label>
+                              Тип программы
+                              <select
+                                value={adaptTo.type}
+                                onChange={(e) =>
+                                  setAdaptTo({ ...adaptTo, type: e.target.value })
+                                }
+                              >
+                                <option value="">не менять</option>
+                                <option value="dpp_pk">повышение квалификации</option>
+                                <option value="dop_obsh">общеразвивающая</option>
+                              </select>
+                            </label>
+                          </div>
+                          <div className="adapt-actions">
+                            <button className="btn ghost" onClick={() => setAdaptOpen(false)}>
+                              Отмена
+                            </button>
+                            <button
+                              className="btn primary"
+                              disabled={busy !== null}
+                              onClick={() => void runAdapt()}
+                            >
+                              {busy === "adapt" ? "перерабатываю…" : "Адаптировать"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="exports">
                     {session &&
                       availableExports.map((item, i) => (

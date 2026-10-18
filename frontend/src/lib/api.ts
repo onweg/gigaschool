@@ -81,6 +81,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export type AdaptChanges = {
+  audience?: string;
+  total_hours?: number;
+  program_type?: "dpp_pk" | "dop_obsh";
+  entry_level?: string;
+};
+
 export type ParsedReference = {
   filename: string;
   size_bytes: number;
@@ -147,6 +154,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ instruction, title, regenerate_tests: true }),
     }),
+  /** Переработать готовую программу под новые условия: исходная не меняется,
+   *  ответ — новая сессия с каркасом и списком изменений. */
+  adapt: (id: string, changes: AdaptChanges) =>
+    call<SessionState & { adapted_from: string; changes: string[] }>(
+      `/sessions/${id}/adapt`,
+      { method: "POST", body: JSON.stringify(changes) }
+    ),
   state: (id: string) => call<SessionState>(`/sessions/${id}`),
   exportUrl: (id: string, kind: string) => `${BASE}/sessions/${id}/export/${kind}`,
 };

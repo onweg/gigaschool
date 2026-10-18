@@ -76,7 +76,6 @@ export function ChatWidget({
   onSendAnswers,
   references,
   onReferences,
-  samples,
   onApprove,
   exports,
   exportUrl,
@@ -97,7 +96,6 @@ export function ChatWidget({
   onSendAnswers: () => void;
   references: ParsedReference[];
   onReferences: (next: ParsedReference[]) => void;
-  samples: { n: string; label: string; text: string }[];
   onApprove: () => void;
   exports: { kind: string; label: string; ext: string }[];
   exportUrl: (kind: string) => string;
@@ -233,23 +231,6 @@ export function ChatWidget({
                   transition={{ duration: 0.3 }}
                 >
                   <StatusLine label={step.label} mark={step.mark} since={since} />
-                </motion.div>
-              )}
-
-              {!session && (
-                <motion.div
-                  className="samples"
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15, duration: 0.4 }}
-                >
-                  <div className="samples-title">Запросы из кейса</div>
-                  {samples.map((sample) => (
-                    <button key={sample.label} onClick={() => onDraft(sample.text)}>
-                      <span className="n">{sample.n}</span>
-                      {sample.label}
-                    </button>
-                  ))}
                 </motion.div>
               )}
 

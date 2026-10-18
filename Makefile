@@ -26,6 +26,10 @@ PLATFORM_ENV ?= /opt/hackathon/ai.env
 MODEL ?= GigaChat/GigaChat-3-Pro
 #: Рабочий файл окружения контейнера; собирается целью `env`.
 ENV_FILE ?= .env
+#: Сколько запросов к модели одновременно. Шлюз площадки держит 2.
+LLM_MAX_PARALLEL ?= 2
+#: 1 — повторные одинаковые запросы берутся с диска и не тратят бюджет.
+LLM_CACHE ?= 1
 
 env:        ## собрать .env из доступов площадки
 	@test -f $(PLATFORM_ENV) || { echo "нет $(PLATFORM_ENV)"; exit 1; }
@@ -43,7 +47,8 @@ deploy: env   ## собрать и поднять оба контейнера н
 	docker rm -f backend frontend 2>/dev/null || true
 	docker run -d --name backend --network acr --restart unless-stopped \
 		$$(test -f $(ENV_FILE) && echo --env-file $(ENV_FILE)) \
-		-e DATA_DIR=/app/data -v $(PWD)/backend/data:/app/data acr-backend
+		-e DATA_DIR=/app/data -e LLM_MAX_PARALLEL=$(LLM_MAX_PARALLEL) -e LLM_CACHE=$(LLM_CACHE) \
+		-v $(PWD)/backend/data:/app/data acr-backend
 	docker run -d --name frontend --network acr --restart unless-stopped \
 		-p $(PORT):80 acr-frontend
 	@sleep 3 && docker exec backend python -c "import urllib.request;\

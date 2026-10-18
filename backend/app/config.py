@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -37,6 +38,8 @@ class Settings(BaseModel):
     #: лимит на команду, а не на процесс, и отвечает 429 — там нужно 1–2.
     llm_max_parallel: int = int(_env("LLM_MAX_PARALLEL", default="2"))
     llm_json_mode: bool = os.getenv("LLM_JSON_MODE", "1") == "1"
+    #: Кэш ответов модели на диске: повторный прогон не тратит бюджет.
+    llm_cache: bool = os.getenv("LLM_CACHE", "0") == "1"
     # Стоимость токенов для расчёта экономики генерации (руб. за 1000 токенов)
     price_prompt_per_1k: float = float(os.getenv("PRICE_PROMPT_PER_1K", "0.20"))
     price_completion_per_1k: float = float(os.getenv("PRICE_COMPLETION_PER_1K", "0.60"))
@@ -63,7 +66,7 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     # Так запуск в чужой среде не скатывается на заглушку из-за забытой переменной.
     wants_live = s.llm_provider in ("", "openai_compat")
     if wants_live and s.llm_api_key and s.llm_model:
-        return OpenAICompatProvider(
+        provider = OpenAICompatProvider(
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
             model=s.llm_model,
@@ -73,4 +76,9 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             supports_json_mode=s.llm_json_mode,
             max_parallel=s.llm_max_parallel,
         )
+        if s.llm_cache:
+            from app.llm.cache import CachedProvider
+
+            return CachedProvider(provider, Path(s.data_dir) / "llm-cache")
+        return provider
     return MockProvider()

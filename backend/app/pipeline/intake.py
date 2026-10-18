@@ -42,6 +42,24 @@ _SESSIONS = re.compile(
     rf"по\s*{_NUM}\s*час\w*\s*{_NUM}\s*раз\w*\s*в\s*недел", re.IGNORECASE
 )
 _MONTHS = re.compile(r"(\d+)\s*месяц", re.IGNORECASE)
+#: Объём программы. Кандидатов может быть несколько («16 часов», «по 2 часа
+#: два раза в неделю», «не больше 4 часов в день»), поэтому отбрасываем те,
+#: что стоят после «по», «до», «не больше» — это нагрузка занятия, не объём.
+_HOURS = re.compile(
+    r"(по|до|не\s*больше|не\s*менее|каждые)?\s*(\d{2,4})\s*(?:академическ\w*\s*)?час",
+    re.IGNORECASE,
+)
+#: Тип программы прямо назван в запросе методиста почти всегда.
+_TYPE_OBSH = re.compile(r"общеразвивающ|общеобразовательн", re.IGNORECASE)
+_TYPE_PK = re.compile(r"повышени\w*\s+квалификации", re.IGNORECASE)
+#: Форма обучения — закрытый список из трёх значений, её незачем угадывать
+#: моделью: в запросе методиста она почти всегда названа прямо. Порядок
+#: важен — «очно-заочная» содержит в себе и «очно», и «заочно».
+_FORMS = (
+    (re.compile(r"очно[\s-]*заочн", re.IGNORECASE), StudyForm.PART_TIME),
+    (re.compile(r"дистанционн\w*\s+формат|полностью\s+дистанционн|заочн", re.IGNORECASE), StudyForm.DISTANT),
+    (re.compile(r"\bочн", re.IGNORECASE), StudyForm.FULL_TIME),
+)
 #: «Аудиторных занятий нет» — это не мнение, а структура часов, поэтому ловим
 #: текстом, а не доверяем модели: от флага зависит всё распределение по видам
 #: работы (стажировка из кейса — 256 ч целиком самостоятельной работы).
@@ -82,6 +100,28 @@ def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
         request.min_practice_share = 0.5
     if _NO_CONTACT.search(text):
         request.no_contact_hours = True
+    if request.total_hours is None:
+        for prefix, value in _HOURS.findall(text):
+            if prefix:
+                continue  # «по 2 часа», «не больше 4 часов в день» — не объём
+            hours = float(value)
+            # Программ короче 16 ак. ч. в кейсе нет; меньшие числа — это
+            # длительность занятия или срок, а не объём программы.
+            if hours >= 16:
+                request.total_hours = hours
+                break
+    if request.program_type is None:
+        if _TYPE_OBSH.search(text):
+            request.program_type = ProgramType.DOP_OBSH
+            request.program_type_confidence = max(request.program_type_confidence, 0.9)
+        elif _TYPE_PK.search(text):
+            request.program_type = ProgramType.DPP_PK
+            request.program_type_confidence = max(request.program_type_confidence, 0.9)
+    if request.study_form is None:
+        for pattern, form in _FORMS:
+            if pattern.search(text):
+                request.study_form = form
+                break
 
 
 async def run_intake(

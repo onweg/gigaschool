@@ -258,13 +258,22 @@ export function App() {
     say("bot", "Собираю содержание: темы, тесты с ключами, задания семинаров, слайды.");
   }
 
-  async function regenerate(topicId: string) {
+  async function regenerate(topicId: string, instruction = "", title = "") {
     if (!session) return;
     setBusyTopic(topicId);
+    if (instruction) say("user", `Тема ${topicId}: ${instruction}`);
     try {
-      const next = await api.regenerateTopic(session.id, topicId);
+      const next = await api.regenerateTopic(session.id, topicId, instruction, title);
       setSession(next);
-      say("bot", "Тема пересобрана, остальной комплект не затронут.");
+      const topic = next.program?.modules
+        .flatMap((m) => m.topics)
+        .find((t) => t.id === topicId);
+      say(
+        "bot",
+        topic
+          ? `Готово: «${topic.title}». ${topic.content?.slice(0, 160) ?? ""}…`
+          : "Тема пересобрана, остальной комплект не затронут."
+      );
     } catch (error) {
       say("sys", `Ошибка: ${(error as Error).message}`);
     } finally {

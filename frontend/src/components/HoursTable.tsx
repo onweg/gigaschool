@@ -1,5 +1,5 @@
-import { motion } from "framer-motion";
-import { Fragment } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Fragment, useState } from "react";
 import type { Program } from "../lib/types";
 import { AnimatedNumber } from "./Motion";
 
@@ -19,9 +19,28 @@ export function HoursTable({
   busyTopic,
 }: {
   program: Program;
-  onRegenerate?: (topicId: string) => void;
+  /** Пересобрать тему: пожелание методиста и, если он его менял, новое название. */
+  onRegenerate?: (topicId: string, instruction: string, title: string) => void;
   busyTopic?: string | null;
 }) {
+  // Тема, у которой открыта форма доработки. Форма одна на таблицу: править
+  // две темы одновременно методисту незачем, а так не плодим состояние.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [title, setTitle] = useState("");
+
+  function open(topicId: string, currentTitle: string) {
+    setEditing(topicId);
+    setInstruction("");
+    setTitle(currentTitle);
+  }
+
+  function submit(topicId: string) {
+    if (!onRegenerate) return;
+    onRegenerate(topicId, instruction.trim(), title.trim());
+    setEditing(null);
+  }
+
   const sum = program.modules.reduce(
     (acc, m) => ({
       lectures: acc.lectures + m.hours.lectures,
@@ -84,22 +103,71 @@ export function HoursTable({
                   {topic.title}
                   {onRegenerate && (
                     <motion.button
-                      className="tiny ghost"
-                      style={{ marginLeft: 8 }}
+                      className="patch-btn"
                       disabled={busyTopic === topic.id}
-                      onClick={() => onRegenerate(topic.id)}
-                      title="Пересобрать только эту тему"
-                      whileHover={{ color: "var(--green)" }}
-                      animate={busyTopic === topic.id ? { rotate: 360 } : { rotate: 0 }}
-                      transition={
-                        busyTopic === topic.id
-                          ? { repeat: Infinity, duration: 1.1, ease: "linear" }
-                          : {}
-                      }
+                      onClick={() => open(topic.id, topic.title)}
+                      title="Переделать эту тему по вашему указанию"
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.97 }}
                     >
-                      ↻
+                      <motion.span
+                        className="patch-ico"
+                        animate={busyTopic === topic.id ? { rotate: 360 } : { rotate: 0 }}
+                        transition={
+                          busyTopic === topic.id
+                            ? { repeat: Infinity, duration: 1.1, ease: "linear" }
+                            : {}
+                        }
+                      >
+                        ↻
+                      </motion.span>
+                      {busyTopic === topic.id ? "переделываю…" : "переделать"}
                     </motion.button>
                   )}
+
+                  <AnimatePresence>
+                    {editing === topic.id && (
+                      <motion.div
+                        className="patch-form"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                      >
+                        <label>
+                          Название темы
+                          <input
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                            placeholder={topic.title}
+                          />
+                        </label>
+                        <label>
+                          Что поправить
+                          <textarea
+                            value={instruction}
+                            onChange={(e) => setInstruction(e.target.value)}
+                            placeholder="например: усложнить, добавить примеры из банков, меньше теории"
+                            rows={2}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(topic.id);
+                              if (e.key === "Escape") setEditing(null);
+                            }}
+                          />
+                        </label>
+                        <div className="patch-actions">
+                          <span className="hint">⌘/Ctrl + Enter</span>
+                          <button className="ghost" onClick={() => setEditing(null)}>
+                            Отмена
+                          </button>
+                          <button className="accent" onClick={() => submit(topic.id)}>
+                            Переделать тему
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </td>
                 <Cell value={topic.hours.total} />
                 <Cell value={topic.hours.lectures} dim />

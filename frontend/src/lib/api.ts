@@ -98,10 +98,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ test_total: testTotal, slides_modules: slidesModules }),
     }),
-  regenerateTopic: (id: string, topicId: string) =>
+  regenerateTopic: (id: string, topicId: string, instruction = "", title = "") =>
     call<SessionState>(`/sessions/${id}/topics/${topicId}/regenerate`, {
       method: "POST",
-      body: JSON.stringify({ regenerate_tests: true }),
+      body: JSON.stringify({ instruction, title, regenerate_tests: true }),
     }),
   state: (id: string) => call<SessionState>(`/sessions/${id}`),
   exportUrl: (id: string, kind: string) => `${BASE}/sessions/${id}/export/${kind}`,

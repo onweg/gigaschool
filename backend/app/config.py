@@ -24,6 +24,36 @@ ALLOWED_LLM_HOSTS = (
 )
 
 
+#: Удалённые настройки. Молча игнорировать их нельзя: на сервере в .env
+#: останется старая строка, и человек будет уверен, что она что-то делает.
+RETIRED_ENV = {
+    "LLM_ALLOW_ANY_HOST": (
+        "он снимал ограничение на адрес модели целиком. Уберите его из .env; "
+        "если нужен другой шлюз — LLM_EXTRA_HOSTS=<домен>"
+    ),
+}
+
+
+def extra_hosts(value: str) -> tuple[str, ...]:
+    """Разобрать LLM_EXTRA_HOSTS и отказать на всём, что открывает слишком много.
+
+    Хост сверяется по суффиксу, поэтому «com» разрешил бы любой .com-адрес,
+    а «*» — вообще всё. Принимаем только полные доменные имена.
+    """
+    hosts: list[str] = []
+    for raw in value.split(","):
+        host = raw.strip().lower()
+        if not host:
+            continue
+        if "*" in host or "/" in host or "." not in host.strip("."):
+            raise ConfigError(
+                f"LLM_EXTRA_HOSTS: {raw.strip()!r} — не доменное имя. Укажите домен "
+                f"целиком, например llm.example-platform.ru; маски и зоны не принимаются"
+            )
+        hosts.append(host.strip("."))
+    return tuple(hosts)
+
+
 def host_allowed(url: str, extra: tuple[str, ...] = ()) -> bool:
     """Хост из списка или его поддомен."""
     host = (urlparse(url).hostname or "").lower()
@@ -77,13 +107,10 @@ class Settings(BaseModel):
     llm_json_mode: bool = Field(default_factory=lambda: os.getenv("LLM_JSON_MODE", "1") == "1")
     #: Кэш ответов модели на диске: повторный прогон не тратит бюджет.
     llm_cache: bool = Field(default_factory=lambda: os.getenv("LLM_CACHE", "0") == "1")
-    #: Снимает ограничение на адрес модели. Нужен на локальной разработке,
-    #: где используется Yandex Foundation Models; в сдаче всегда выключен.
-    llm_allow_any_host: bool = Field(
-        default_factory=lambda: os.getenv("LLM_ALLOW_ANY_HOST", "0") == "1"
-    )
-    #: Дополнительные разрешённые хосты, через запятую, — на случай, если
-    #: площадка выдаст шлюз на другом домене.
+    #: Дополнительные разрешённые хосты, через запятую. Разрешают конкретный
+    #: домен, а не снимают проверку целиком: выключателя «любой адрес» нет
+    #: намеренно — опция, которая открывает запрещённые API, рано или поздно
+    #: окажется включённой в бою.
     llm_extra_hosts: str = Field(default_factory=lambda: os.getenv("LLM_EXTRA_HOSTS", ""))
     # Стоимость токенов для расчёта экономики генерации (руб. за 1000 токенов)
     price_prompt_per_1k: float = Field(
@@ -122,6 +149,9 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     from app.llm.openai_compat import OpenAICompatProvider
 
     s = get_settings()
+    for name, advice in RETIRED_ENV.items():
+        if os.getenv(name):
+            raise ConfigError(f"{name} больше не поддерживается: {advice}")
     # Провайдер можно не задавать: есть ключ и модель — работаем с моделью.
     # Так запуск в чужой среде не скатывается на заглушку из-за забытой переменной.
     wants_live = s.llm_provider in ("", "openai_compat")
@@ -131,13 +161,13 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
                 "задан ключ модели, но не задан её адрес: укажите OPENAI_BASE_URL "
                 "(или LLM_BASE_URL) — например, шлюз площадки из /opt/hackathon/ai.env"
             )
-        extra = tuple(h.strip() for h in s.llm_extra_hosts.split(",") if h.strip())
-        if not s.llm_allow_any_host and not host_allowed(s.llm_base_url, extra):
+        extra = extra_hosts(s.llm_extra_hosts)
+        if not host_allowed(s.llm_base_url, extra):
             raise ConfigError(
                 f"адрес модели {s.llm_base_url!r} не разрешён. Кейс допускает только "
-                f"модели Cloud.ru: {', '.join(ALLOWED_LLM_HOSTS)}. "
-                f"Для разработки на другом провайдере — LLM_ALLOW_ANY_HOST=1, "
-                f"для другого шлюза площадки — LLM_EXTRA_HOSTS=<домен>."
+                f"модели Cloud.ru: {', '.join(ALLOWED_LLM_HOSTS)}. Если площадка "
+                f"выдала шлюз на другом домене, добавьте именно его: "
+                f"LLM_EXTRA_HOSTS=<домен>."
             )
         provider = OpenAICompatProvider(
             base_url=s.llm_base_url,
@@ -184,8 +214,8 @@ def describe_config() -> list[str]:
         f"кэш ответов:    {'включён' if s.llm_cache else 'выключен'}",
         f"данные:         {Path(s.data_dir).resolve()}",
     ]
-    if s.llm_allow_any_host:
-        lines.append("ВНИМАНИЕ:       LLM_ALLOW_ANY_HOST=1 — проверка адреса модели снята")
+    if s.llm_extra_hosts:
+        lines.append(f"доп. хосты:     {', '.join(extra_hosts(s.llm_extra_hosts))}")
     return lines
 
 
@@ -201,10 +231,10 @@ def check_config() -> list[str]:
         probe.unlink()
     except OSError as exc:
         warnings.append(f"каталог данных {data} недоступен для записи: {exc}")
-    if s.llm_allow_any_host:
+    if s.llm_extra_hosts:
         warnings.append(
-            "снято ограничение на адрес модели (LLM_ALLOW_ANY_HOST=1). "
-            "Кейс допускает только Cloud.ru — для сдачи флаг нужно убрать"
+            f"разрешены хосты вне Cloud.ru: {', '.join(extra_hosts(s.llm_extra_hosts))}. "
+            "Для сдачи кейса уберите LLM_EXTRA_HOSTS"
         )
     if not s.metrics_token:
         warnings.append(

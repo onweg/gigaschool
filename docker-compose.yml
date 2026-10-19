@@ -14,8 +14,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_AUTH_SCHEME: ${LLM_AUTH_SCHEME:-}
       # Адрес модели ограничен списком (кейс допускает только Cloud.ru).
-      # Флаг снимает проверку — нужен для разработки на Yandex.
-      LLM_ALLOW_ANY_HOST: ${LLM_ALLOW_ANY_HOST:-0}
+      # Другой шлюз разрешается конкретным доменом, выключателя проверки нет.
       LLM_EXTRA_HOSTS: ${LLM_EXTRA_HOSTS:-}
       # Сколько запросов к модели одновременно: шлюз площадки держит 2.
       LLM_MAX_PARALLEL: ${LLM_MAX_PARALLEL:-2}

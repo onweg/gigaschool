@@ -74,15 +74,70 @@ def test_cloud_ru_starts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert build_provider().name == "openai_compat"
 
 
-def test_explicit_override_is_possible_for_development(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Разработке нужен Yandex — но только через явный флаг, не по умолчанию."""
+def test_development_host_is_allowed_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Разработке нужен Yandex — разрешаем его домен явно, а не всё подряд."""
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://llm.api.cloud.yandex.net/v1")
     monkeypatch.setenv("LLM_MODEL", "gpt://folder/yandexgpt/latest")
-    monkeypatch.setenv("LLM_ALLOW_ANY_HOST", "1")
+    monkeypatch.setenv("LLM_EXTRA_HOSTS", "llm.api.cloud.yandex.net")
     get_settings.cache_clear()
 
     assert build_provider().name == "openai_compat"
+
+
+def test_extra_host_does_not_open_other_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Разрешённый Yandex не должен пропускать OpenAI: разрешение точечное."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4")
+    monkeypatch.setenv("LLM_EXTRA_HOSTS", "llm.api.cloud.yandex.net")
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigError, match="не разрешён"):
+        build_provider()
+
+
+@pytest.mark.parametrize("value", ["*", "com", ".ru", "*.openai.com", "https://api.openai.com"])
+def test_extra_hosts_refuse_wildcards_and_zones(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Хост сверяется по суффиксу, поэтому «com» открыл бы любой .com.
+
+    Именно такую лазейку проверяющие назвали «опасной fallback-опцией».
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("LLM_EXTRA_HOSTS", value)
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigError, match="не доменное имя"):
+        build_provider()
+
+
+def test_retired_blanket_flag_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Старый выключатель проверки не должен тихо ничего не делать.
+
+    На сервере в .env останется старая строка — человек должен узнать, что
+    она больше не действует, а не гадать, почему не работает.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("LLM_ALLOW_ANY_HOST", "1")
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigError, match="больше не поддерживается"):
+        build_provider()
+
+
+def test_there_is_no_switch_to_disable_the_host_check() -> None:
+    """Опции «разрешить любой адрес» в настройках нет и быть не должно."""
+    from app.config import Settings
+
+    names = " ".join(Settings.model_fields).lower()
+    assert "any_host" not in names
+    assert "allow_any" not in names
 
 
 def test_extra_host_can_be_added(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,14 +226,14 @@ def test_startup_report_hides_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "GigaChat" in report
 
 
-def test_warning_when_host_check_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Снятое ограничение не должно потеряться: с ним нельзя идти в сдачу."""
+def test_warning_when_extra_hosts_are_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Хост вне Cloud.ru не должен потеряться: с ним нельзя идти в сдачу."""
     from app.config import check_config
 
-    monkeypatch.setenv("LLM_ALLOW_ANY_HOST", "1")
+    monkeypatch.setenv("LLM_EXTRA_HOSTS", "llm.api.cloud.yandex.net")
     get_settings.cache_clear()
 
-    assert any("LLM_ALLOW_ANY_HOST" in w for w in check_config())
+    assert any("вне Cloud.ru" in w for w in check_config())
 
 
 def test_no_warnings_in_a_clean_setup(monkeypatch: pytest.MonkeyPatch) -> None:

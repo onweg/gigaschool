@@ -28,9 +28,6 @@ MODEL ?= GigaChat/GigaChat-3-Pro
 ENV_FILE ?= .env
 #: Сколько запросов к модели одновременно. Шлюз площадки держит 2.
 LLM_MAX_PARALLEL ?= 2
-#: Снимает ограничение на адрес модели. На площадке не нужен: её шлюз
-#: в списке разрешённых. Нужен только при работе на другом провайдере.
-LLM_ALLOW_ANY_HOST ?= 0
 #: 0 по умолчанию: на защите агент обязан генерировать по-настоящему.
 #: 1 — повторные одинаковые запросы берутся с диска и не тратят бюджет,
 #: это режим отладки: `make deploy LLM_CACHE=1`.
@@ -57,7 +54,6 @@ deploy: env   ## собрать и поднять оба контейнера н
 	docker run -d --name backend --network acr --restart unless-stopped \
 		$$(test -f $(ENV_FILE) && echo --env-file $(ENV_FILE)) \
 		-e DATA_DIR=/app/data -e LLM_MAX_PARALLEL=$(LLM_MAX_PARALLEL) -e LLM_CACHE=$(LLM_CACHE) \
-		-e LLM_ALLOW_ANY_HOST=$(LLM_ALLOW_ANY_HOST) \
 		-v $(PWD)/backend/data:/app/data acr-backend
 	docker run -d --name frontend --network acr --restart unless-stopped \
 		-p $(PORT):80 acr-frontend

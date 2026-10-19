@@ -10,9 +10,12 @@ import re
 from app.llm.base import LLMProvider, Usage
 from app.schemas.ir import ProgramType, StudyForm
 from app.schemas.request import ClarifyingQuestion, IntakeResult, ProgramRequest
+from app.config import get_settings
 from app.skills import load_skill
 
-MAX_QUESTIONS = 5
+#: Предел уточняющих вопросов за раз — из настроек, по умолчанию пять,
+#: как требует эталонный чек-лист кейса.
+MAX_QUESTIONS = get_settings().max_clarifying_questions
 
 #: Человекочитаемые формулировки вопросов — чтобы не зависеть от модели в том,
 #: что проверяет чек-лист («вопросы понятны методисту, без жаргона»).

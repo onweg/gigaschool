@@ -22,7 +22,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.config import ConfigError, build_provider, check_config, describe_config, get_settings
-from app.llm.metered import MeteredProvider, current_session
+
+# Конфигурацию проверяем до импорта остальных модулей: хранилище сессий и
+# метрики читают настройки при импорте, и ошибка в .env всплыла бы там —
+# стеком вызовов посреди демонстрации, а не объяснением.
+def _refuse_to_start(exc: Exception) -> None:
+    print("\n  Не удалось запустить агента.\n", file=sys.stderr)
+    print(f"  {exc}\n", file=sys.stderr)
+    print("  Проверьте .env или переменные окружения и запустите снова.\n", file=sys.stderr)
+    raise SystemExit(2) from None
+
+
+try:
+    settings = get_settings()
+except ConfigError as exc:
+    _refuse_to_start(exc)
+
+from app.llm.metered import MeteredProvider, current_session  # noqa: E402
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
 from app.core.hours import rebalance_topics, split_exact
@@ -48,7 +64,6 @@ from app.schemas.request import ClarifyingQuestion, ProgramRequest as Clarifying
 from app.skills import list_skills
 from app.store import Session, Stage, store
 
-settings = get_settings()
 app = FastAPI(
     title="Агент образовательных программ АЦР",
     version="0.1.0",
@@ -61,15 +76,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Конфигурацию проверяем при старте, а не при первом запросе: иначе ошибка
-# всплывает посреди демонстрации, да ещё и стеком вызовов вместо объяснения.
 try:
     _base_provider = build_provider()
 except ConfigError as exc:
-    print("\n  Не удалось запустить агента.\n", file=sys.stderr)
-    print(f"  {exc}\n", file=sys.stderr)
-    print("  Проверьте .env или переменные окружения и запустите снова.\n", file=sys.stderr)
-    raise SystemExit(2) from None
+    _refuse_to_start(exc)
 
 print("Агент образовательных программ АЦР", file=sys.stderr)
 for _line in describe_config():
@@ -94,7 +104,7 @@ def _device(request: Request) -> str:
     return (request.headers.get("x-device-id") or "")[:64]
 
 #: Предел на референс: методист прикладывает программу, а не видеоархив.
-MAX_REFERENCE_BYTES = 25 * 1024 * 1024
+MAX_REFERENCE_BYTES = settings.max_reference_mb * 1024 * 1024
 
 
 # --------------------------------------------------------------------------- #

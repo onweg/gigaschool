@@ -30,6 +30,13 @@ services:
       METHODIST_HOUR_COST: ${METHODIST_HOUR_COST:-800}
       MANUAL_HOURS_PER_PROGRAM: ${MANUAL_HOURS_PER_PROGRAM:-60}
       LLM_JSON_MODE: ${LLM_JSON_MODE:-1}
+      # Рабочие пороги — описание и допустимые диапазоны в backend/app/config.py
+      QUESTIONS_PER_TOPIC: ${QUESTIONS_PER_TOPIC:-2}
+      SLIDE_TOPICS: ${SLIDE_TOPICS:-2}
+      MAX_CLARIFYING_QUESTIONS: ${MAX_CLARIFYING_QUESTIONS:-5}
+      MAX_REFERENCE_MB: ${MAX_REFERENCE_MB:-25}
+      REFERENCE_MAX_CHARS: ${REFERENCE_MAX_CHARS:-6000}
+      MAX_MESSAGES: ${MAX_MESSAGES:-60}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
       # Телеметрия закрыта токеном: в ней запросы методистов и стоимость.
       METRICS_TOKEN: ${METRICS_TOKEN:-}

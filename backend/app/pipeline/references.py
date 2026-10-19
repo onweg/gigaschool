@@ -10,8 +10,11 @@ import io
 import zipfile
 from xml.etree import ElementTree as ET
 
+from app.config import get_settings
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-MAX_CHARS = 6000
+#: Сколько символов референса уходит в промпт — из настроек.
+MAX_CHARS = get_settings().reference_max_chars
 
 
 def parse_docx(data: bytes) -> str:

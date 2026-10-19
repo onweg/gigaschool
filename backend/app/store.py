@@ -67,7 +67,7 @@ class UsageRecord(BaseModel):
 
 #: Сколько реплик держим в сессии: файл на диске не должен пухнуть,
 #: а модели для понимания хватает нескольких последних.
-MAX_MESSAGES = 60
+MAX_MESSAGES = get_settings().max_messages
 
 
 class ChatMessage(BaseModel):

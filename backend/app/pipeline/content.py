@@ -21,15 +21,18 @@ from app.schemas.ir import (
     TestQuestion,
     Topic,
 )
+from app.config import get_settings
 from app.skills import load_skill
 
-#: Запас сверху: нижний предел всё равно держит семафор провайдера,
-#: который знает про лимит шлюза.
-MAX_PARALLEL = 4
-QUESTIONS_PER_TOPIC = 2
+#: Пороги берутся из настроек (см. config.py и .env.example): их разумно
+#: менять под площадку, а не править код.
+_settings = get_settings()
+#: Одновременных задач по темам. Тот же предел, что у шлюза: держать больше
+#: задач, чем пускает провайдер, бессмысленно — они просто стоят в очереди.
+MAX_PARALLEL = _settings.llm_max_parallel
+QUESTIONS_PER_TOPIC = _settings.questions_per_topic
 #: Сколько первых тем получают слайды, когда методист не выбрал модули.
-#: Эталонный чек-лист кейса просит слайды «для первых двух занятий».
-MIN_SLIDE_TOPICS = 2
+MIN_SLIDE_TOPICS = _settings.slide_topics
 
 
 def _outcomes_block(program: Program, topic: Topic) -> str:

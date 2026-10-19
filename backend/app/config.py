@@ -68,6 +68,15 @@ def host_allowed(url: str, extra: tuple[str, ...] = ()) -> bool:
 #: Среда хакатона кладёт доступы к моделям Cloud.ru в OPENAI_*-переменные
 #: (/opt/hackathon/ai.env). Принимаем оба написания: свои LLM_* в приоритете,
 #: иначе берём то, что дала площадка, — иначе запуск молча уходит на заглушку.
+def _number(name: str, default: str, kind: type = int):  # noqa: ANN205
+    """Число из окружения с понятной ошибкой вместо стека вызовов."""
+    raw = os.getenv(name, default)
+    try:
+        return kind(raw)
+    except ValueError:
+        raise ConfigError(f"{name}={raw!r}: ожидалось число") from None
+
+
 def _env(*names: str, default: str = "") -> str:
     for name in names:
         if value := os.getenv(name):
@@ -92,7 +101,7 @@ class Settings(BaseModel):
     llm_model: str = Field(default_factory=lambda: _env("LLM_MODEL", "OPENAI_MODEL"))
     # Задержка mock-ответа, мс: офлайн-демо иначе отрабатывает мгновенно
     # и прогресс генерации не успевает показаться.
-    mock_latency_ms: int = Field(default_factory=lambda: int(os.getenv("MOCK_LATENCY_MS", "0")))
+    mock_latency_ms: int = Field(default_factory=lambda: _number("MOCK_LATENCY_MS", "0"))
     # Yandex ждёт «Api-Key», OpenAI-совместимые шлюзы (Cloud.ru) — «Bearer».
     llm_auth_scheme: str = Field(
         default_factory=lambda: _env(
@@ -100,10 +109,10 @@ class Settings(BaseModel):
             default="Bearer" if os.getenv("OPENAI_API_KEY") else "Api-Key",
         )
     )
-    llm_timeout: float = Field(default_factory=lambda: float(os.getenv("LLM_TIMEOUT", "180")))
+    llm_timeout: float = Field(default_factory=lambda: _number("LLM_TIMEOUT", "180", float))
     #: Сколько запросов к модели держим одновременно. Шлюз хакатона даёт
     #: лимит на команду, а не на процесс, и отвечает 429 — там нужно 1–2.
-    llm_max_parallel: int = Field(default_factory=lambda: int(_env("LLM_MAX_PARALLEL", default="2")))
+    llm_max_parallel: int = Field(default_factory=lambda: _number("LLM_MAX_PARALLEL", "2"))
     llm_json_mode: bool = Field(default_factory=lambda: os.getenv("LLM_JSON_MODE", "1") == "1")
     #: Кэш ответов модели на диске: повторный прогон не тратит бюджет.
     llm_cache: bool = Field(default_factory=lambda: os.getenv("LLM_CACHE", "0") == "1")
@@ -114,22 +123,45 @@ class Settings(BaseModel):
     llm_extra_hosts: str = Field(default_factory=lambda: os.getenv("LLM_EXTRA_HOSTS", ""))
     # Стоимость токенов для расчёта экономики генерации (руб. за 1000 токенов)
     price_prompt_per_1k: float = Field(
-        default_factory=lambda: float(os.getenv("PRICE_PROMPT_PER_1K", "0.20"))
+        default_factory=lambda: _number("PRICE_PROMPT_PER_1K", "0.20", float)
     )
     price_completion_per_1k: float = Field(
-        default_factory=lambda: float(os.getenv("PRICE_COMPLETION_PER_1K", "0.60"))
+        default_factory=lambda: _number("PRICE_COMPLETION_PER_1K", "0.60", float)
     )
     methodist_hour_cost: float = Field(
-        default_factory=lambda: float(os.getenv("METHODIST_HOUR_COST", "800"))
+        default_factory=lambda: _number("METHODIST_HOUR_COST", "800", float)
     )
     manual_hours_per_program: float = Field(
-        default_factory=lambda: float(os.getenv("MANUAL_HOURS_PER_PROGRAM", "60"))
+        default_factory=lambda: _number("MANUAL_HOURS_PER_PROGRAM", "60", float)
     )
 
     #: Токен для чтения телеметрии. В ней лежат тексты запросов методистов
     #: и стоимость генераций — наружу это отдавать нельзя. Пусто — раздел
     #: статистики закрыт целиком.
     metrics_token: str = Field(default_factory=lambda: os.getenv("METRICS_TOKEN", ""))
+
+    # --- Рабочие пороги: разумно менять под площадку и нагрузку -------------
+    #: Тестовых вопросов на тему, когда методист не назвал общее число.
+    questions_per_topic: int = Field(
+        default_factory=lambda: _number("QUESTIONS_PER_TOPIC", "2")
+    )
+    #: Сколько первых тем получают слайды, если модули не выбраны явно.
+    #: Эталонный чек-лист просит слайды «для первых двух занятий».
+    slide_topics: int = Field(default_factory=lambda: _number("SLIDE_TOPICS", "2"))
+    #: Предел уточняющих вопросов за раз. Чек-лист кейса: «не больше пяти».
+    max_clarifying_questions: int = Field(
+        default_factory=lambda: _number("MAX_CLARIFYING_QUESTIONS", "5")
+    )
+    #: Предел размера референса, МБ: методист прикладывает программу, не архив.
+    max_reference_mb: int = Field(
+        default_factory=lambda: _number("MAX_REFERENCE_MB", "25")
+    )
+    #: Сколько символов референса уходит в промпт после сжатия до структуры.
+    reference_max_chars: int = Field(
+        default_factory=lambda: _number("REFERENCE_MAX_CHARS", "6000")
+    )
+    #: Сколько реплик переписки держим в сессии.
+    max_messages: int = Field(default_factory=lambda: _number("MAX_MESSAGES", "60"))
 
     data_dir: str = Field(default_factory=lambda: os.getenv("DATA_DIR", "./data"))
     cors_origins: list[str] = Field(
@@ -149,6 +181,7 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     from app.llm.openai_compat import OpenAICompatProvider
 
     s = get_settings()
+    _check_ranges(s)
     for name, advice in RETIRED_ENV.items():
         if os.getenv(name):
             raise ConfigError(f"{name} больше не поддерживается: {advice}")
@@ -196,6 +229,28 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     return MockProvider()
 
 
+#: Допустимые диапазоны числовых настроек. Ноль вопросов на тему или
+#: отрицательный таймаут дают не ошибку, а тихо испорченный комплект.
+_RANGES = {
+    "llm_max_parallel": (1, 16),
+    "llm_timeout": (5, 3600),
+    "questions_per_topic": (1, 20),
+    "slide_topics": (1, 20),
+    "max_clarifying_questions": (1, 10),
+    "max_reference_mb": (1, 200),
+    "reference_max_chars": (500, 100_000),
+    "max_messages": (10, 1000),
+}
+
+
+def _check_ranges(s: Settings) -> None:
+    for field, (low, high) in _RANGES.items():
+        value = getattr(s, field)
+        if not low <= value <= high:
+            env = field.upper()
+            raise ConfigError(f"{env}={value}: допустимо от {low} до {high}")
+
+
 def describe_config() -> list[str]:
     """Строки для журнала запуска: с чем именно поднялся сервис.
 
@@ -240,6 +295,11 @@ def check_config() -> list[str]:
         warnings.append(
             "METRICS_TOKEN не задан — раздел статистики закрыт. "
             "Задайте токен, чтобы открыть его себе"
+        )
+    if s.max_clarifying_questions > 5:
+        warnings.append(
+            f"MAX_CLARIFYING_QUESTIONS={s.max_clarifying_questions}: чек-лист кейса "
+            f"требует не больше пяти уточняющих вопросов"
         )
     if s.llm_max_parallel > 4:
         warnings.append(

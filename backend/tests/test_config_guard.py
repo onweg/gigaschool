@@ -289,3 +289,39 @@ def test_health_stays_open(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.main import app
 
     assert TestClient(app).get("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "name, value, message",
+    [
+        ("QUESTIONS_PER_TOPIC", "два", "ожидалось число"),
+        ("LLM_MAX_PARALLEL", "0", "допустимо от 1"),
+        ("LLM_TIMEOUT", "-5", "допустимо от 5"),
+        ("SLIDE_TOPICS", "100", "допустимо от 1 до 20"),
+    ],
+)
+def test_bad_numbers_are_explained(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str, message: str
+) -> None:
+    """Ноль вопросов на тему или отрицательный таймаут дают не ошибку,
+    а тихо испорченный комплект — поэтому отказ при старте и понятный текст."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigError, match=message):
+        get_settings()
+        build_provider()
+
+
+def test_thresholds_have_documented_defaults() -> None:
+    """Пороги вынесены в настройки, умолчания — прежние."""
+    from app.config import Settings
+
+    s = Settings()
+    assert s.questions_per_topic == 2
+    assert s.slide_topics == 2
+    assert s.max_clarifying_questions == 5, "чек-лист кейса: не больше пяти вопросов"
+    assert s.max_reference_mb == 25

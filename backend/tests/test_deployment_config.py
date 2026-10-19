@@ -21,14 +21,14 @@ FIXED_IN_COMPOSE = {"DATA_DIR"}
 
 
 def _variables_read_by_code() -> set[str]:
-    """Имена из каждого вызова os.getenv/_env, включая запасные варианты.
+    """Имена из каждого вызова os.getenv/_env/_number, включая запасные варианты.
 
     `_env("LLM_BASE_URL", "OPENAI_BASE_URL")` читает обе переменные, поэтому
     обе должны доходить до контейнера.
     """
     text = CONFIG.read_text(encoding="utf-8")
     names: set[str] = set()
-    for call in re.findall(r"(?:os\.getenv|_env)\(([^)]*)\)", text, re.S):
+    for call in re.findall(r"(?:os\.getenv|_env|_number)\(([^)]*)\)", text, re.S):
         names.update(re.findall(r'"([A-Z][A-Z0-9_]*)"', call))
     return names
 

@@ -305,6 +305,11 @@ def check_config() -> list[str]:
             f"разрешены хосты вне Cloud.ru: {', '.join(extra_hosts(s.llm_extra_hosts))}. "
             "Для сдачи кейса уберите LLM_EXTRA_HOSTS"
         )
+    if s.llm_cache:
+        warnings.append(
+            "LLM_CACHE=1: повторные запросы берутся с диска, генерация не настоящая. "
+            "Для сдачи и защиты выключите"
+        )
     if not s.metrics_token:
         warnings.append(
             "METRICS_TOKEN не задан — раздел статистики закрыт. "

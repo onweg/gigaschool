@@ -325,3 +325,13 @@ def test_thresholds_have_documented_defaults() -> None:
     assert s.slide_topics == 2
     assert s.max_clarifying_questions == 5, "чек-лист кейса: не больше пяти вопросов"
     assert s.max_reference_mb == 25
+
+
+def test_cache_is_reported_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """README обещает предупреждение — с кэшем на защите генерация не настоящая."""
+    from app.config import check_config
+
+    monkeypatch.setenv("LLM_CACHE", "1")
+    get_settings.cache_clear()
+
+    assert any("LLM_CACHE=1" in w for w in check_config())

@@ -23,7 +23,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import build_provider
+from app.config import ConfigError, build_provider
 from app.core.validate import validate_program
 from app.pipeline.content import build_content
 from app.pipeline.intake import apply_answers, run_intake
@@ -681,7 +681,11 @@ async def main() -> int:
     p.add_argument("--only", type=int, choices=[c.num for c in CASES], help="прогнать один запрос")
     args = p.parse_args()
 
-    provider = build_provider()
+    try:
+        provider = build_provider()
+    except ConfigError as exc:
+        print(f"{RED}не запустить:{OFF} {exc}")
+        return 2
     cases = [c for c in CASES if args.only is None or c.num == args.only]
     print(f"провайдер: {provider.name}; запросов: {len(cases)}")
 

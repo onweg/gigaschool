@@ -206,17 +206,70 @@ class AcrDocxBuilder:
         self.page_break()
 
     # ------------------------- общие таблицы ----------------------------- #
+    # Колонки часов разные для двух шаблонов, как в образцах АЦР (data/acr/):
+    #   повышение квалификации — ЛК · ПР · ЛБ · СРС;
+    #   общеразвивающая — всего аудиторных · лекции · практика · самостоятельная,
+    #   лабораторных в этом шаблоне нет вовсе.
+    @property
+    def _obsh(self) -> bool:
+        return self.p.meta.program_type is ProgramType.DOP_OBSH
+
+    def _hour_headers(self, total_title: str) -> list[str]:
+        if self._obsh:
+            return [
+                total_title,
+                "Всего аудиторных",
+                "Лекции / теория",
+                "Практические занятия",
+                "Самостоятельная работа",
+            ]
+        return [total_title, "ЛК", "ПР", "ЛБ", "СРС"]
+
+    def _hour_cells(self, hours, total: float | None = None) -> list[str]:  # noqa: ANN001
+        """Часы строки. `total` — если «Всего» считается иначе, чем сумма вида."""
+        whole = hours_str(hours.total if total is None else total)
+        if self._obsh:
+            return [
+                whole,
+                hours_str(hours.contact),
+                hours_str(hours.lectures),
+                hours_str(hours.practice + hours.labs),
+                hours_str(hours.self_study),
+            ]
+        return [
+            whole,
+            hours_str(hours.lectures),
+            hours_str(hours.practice),
+            hours_str(hours.labs),
+            hours_str(hours.self_study),
+        ]
+
+    def _attestation_cells(self) -> list[str]:
+        att = self.p.final_attestation
+        if self._obsh:
+            # Аттестация проходит на занятии — её часы аудиторные.
+            return [hours_str(att.hours), hours_str(att.hours), "—", "—", "—"]
+        return [hours_str(att.hours), "—", "—", "—", "—"]
+
+    def _total_cells(self) -> list[str]:
+        total = self.p.modules_hours
+        cells = self._hour_cells(total, total=self.p.grand_total)
+        if self._obsh:
+            cells[1] = hours_str(total.contact + self.p.final_attestation.hours)
+        return cells
+
+    def _widths(self, name: float, control: float) -> list[float]:
+        if self._obsh:
+            return [1.0, name, 1.6, 1.6, 1.5, 1.6, 1.8, control]
+        return [1.2, name, 1.8, 1.1, 1.1, 1.1, 1.2, control]
+
     def study_plan_table(self) -> None:
         """2.1 Учебный план. Строка «Итого» считается из модулей, не из модели."""
         rows: list[list[str]] = [
             [
                 "№ п/п",
                 "Наименование разделов/модулей",
-                "Общая трудоёмкость, час.",
-                "ЛК",
-                "ПР",
-                "ЛБ",
-                "СРС",
+                *self._hour_headers("Общая трудоёмкость, час."),
                 "Форма промежуточной аттестации/контроля",
             ]
         ]
@@ -225,48 +278,26 @@ class AcrDocxBuilder:
                 [
                     f"{module.index}.",
                     module.title,
-                    hours_str(module.hours.total),
-                    hours_str(module.hours.lectures),
-                    hours_str(module.hours.practice),
-                    hours_str(module.hours.labs),
-                    hours_str(module.hours.self_study),
+                    *self._hour_cells(module.hours),
                     module.assessment_form or "—",
                 ]
             )
         att = self.p.final_attestation
-        rows.append(
-            ["", "Итоговая аттестация", hours_str(att.hours), "—", "—", "—", "—", att.form]
-        )
-        total = self.p.modules_hours
-        rows.append(
-            [
-                "",
-                "Итого (час.)",
-                hours_str(self.p.grand_total),
-                hours_str(total.lectures),
-                hours_str(total.practice),
-                hours_str(total.labs),
-                hours_str(total.self_study),
-                "",
-            ]
-        )
-        self.table(rows, widths=[1.2, 5.5, 1.8, 1.1, 1.1, 1.1, 1.2, 3.5])
+        rows.append(["", "Итоговая аттестация", *self._attestation_cells(), att.form])
+        rows.append(["", "Итого (час.)", *self._total_cells(), ""])
+        self.table(rows, widths=self._widths(5.5, 3.5))
 
     def topic_plan_table(self) -> None:
         """2.2 Учебно-тематический план: модули и темы с часами."""
         rows: list[list[str]] = [
-            ["№", "Наименование разделов и тем", "Всего", "ЛК", "ПР", "ЛБ", "СРС", "Контроль"]
+            ["№", "Наименование разделов и тем", *self._hour_headers("Всего"), "Контроль"]
         ]
         for module in self.p.modules:
             rows.append(
                 [
                     f"{module.index}.",
                     module.title,
-                    hours_str(module.hours.total),
-                    hours_str(module.hours.lectures),
-                    hours_str(module.hours.practice),
-                    hours_str(module.hours.labs),
-                    hours_str(module.hours.self_study),
+                    *self._hour_cells(module.hours),
                     module.assessment_form or "",
                 ]
             )
@@ -275,30 +306,14 @@ class AcrDocxBuilder:
                     [
                         f"{topic.code}.",
                         topic.title,
-                        hours_str(topic.hours.total),
-                        hours_str(topic.hours.lectures),
-                        hours_str(topic.hours.practice),
-                        hours_str(topic.hours.labs),
-                        hours_str(topic.hours.self_study),
+                        *self._hour_cells(topic.hours),
                         topic.assessment_form or "",
                     ]
                 )
         att = self.p.final_attestation
-        rows.append(["", "Итоговая аттестация", hours_str(att.hours), "—", "—", "—", "—", att.form])
-        total = self.p.modules_hours
-        rows.append(
-            [
-                "",
-                "Итого (час.)",
-                hours_str(self.p.grand_total),
-                hours_str(total.lectures),
-                hours_str(total.practice),
-                hours_str(total.labs),
-                hours_str(total.self_study),
-                "",
-            ]
-        )
-        self.table(rows, widths=[1.2, 6.0, 1.3, 1.0, 1.0, 1.0, 1.1, 3.0])
+        rows.append(["", "Итоговая аттестация", *self._attestation_cells(), att.form])
+        rows.append(["", "Итого (час.)", *self._total_cells(), ""])
+        self.table(rows, widths=self._widths(5.2, 3.0))
 
     def outcomes_list(self) -> None:
         for kind, label in (

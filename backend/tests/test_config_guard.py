@@ -350,3 +350,18 @@ def test_retired_flag_switched_off_does_not_block(
     get_settings.cache_clear()
 
     assert build_provider().name == "openai_compat"
+
+
+@pytest.mark.parametrize("key", ["ВАШ_КЛЮЧ", "<ключ>", "AQVN abc def", "ключ-от-yandex"])
+def test_placeholder_instead_of_key_is_explained(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """Живой случай: подставили «ВАШ_КЛЮЧ» — и каждый запрос падал с
+    «'ascii' codec can't encode», по которому не понять, что дело в ключе."""
+    monkeypatch.setenv("OPENAI_API_KEY", key)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://hub.gigaschool.ru/api/v1/llm/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigError, match="текст-подсказка"):
+        build_provider()

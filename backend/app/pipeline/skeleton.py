@@ -137,6 +137,14 @@ def _mix_weights(mix: dict, request: ProgramRequest) -> dict[str, float]:
         "labs": float(mix.get("labs", 0) or 0),
         "self_study": float(mix.get("self_study", 0) or 0),
     }
+    # В образце общеразвивающей программы АЦР (data/acr/example-dop-obsh)
+    # колонки «лабораторные» нет: только лекции, практика и самостоятельная.
+    # Лабораторная — тоже занятие в классе, поэтому её доля уходит в практику,
+    # а не в самостоятельную работу: иначе расписание «8 занятий по 2 часа»
+    # перестанет сходиться с аудиторными часами.
+    if request.program_type is ProgramType.DOP_OBSH:
+        weights["practice"] += weights["labs"]
+        weights["labs"] = 0.0
     if contact_only(request):
         weights["self_study"] = 0.0
         if weights["lectures"] + weights["practice"] + weights["labs"] <= 0:

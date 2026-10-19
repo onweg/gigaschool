@@ -52,6 +52,9 @@ export function HoursTable({
     { lectures: 0, practice: 0, labs: 0, self_study: 0, total: 0 }
   );
   const grand = sum.total + program.final_attestation.hours;
+  // В шаблоне общеразвивающей программы АЦР колонки лабораторных нет —
+  // показываем таблицу так же, как она выйдет в документе.
+  const labs = program.meta.program_type !== "dop_obsh";
   const matches = Math.abs(grand - program.meta.total_hours) < 0.01;
 
   return (
@@ -64,7 +67,7 @@ export function HoursTable({
           <th className="num">Всего</th>
           <th className="num">ЛК</th>
           <th className="num">ПР</th>
-          <th className="num">ЛБ</th>
+          {labs && <th className="num">ЛБ</th>}
           <th className="num">СРС</th>
           <th style={{ width: 118 }}>РО</th>
         </tr>
@@ -83,7 +86,7 @@ export function HoursTable({
               <Cell value={module.hours.total} />
               <Cell value={module.hours.lectures} dim />
               <Cell value={module.hours.practice} dim />
-              <Cell value={module.hours.labs} dim />
+              {labs && <Cell value={module.hours.labs} dim />}
               <Cell value={module.hours.self_study} dim />
               <td>{module.assessment_form ? <span className="tag">контроль</span> : null}</td>
             </motion.tr>
@@ -173,7 +176,7 @@ export function HoursTable({
                 <Cell value={topic.hours.total} />
                 <Cell value={topic.hours.lectures} dim />
                 <Cell value={topic.hours.practice} dim />
-                <Cell value={topic.hours.labs} dim />
+                {labs && <Cell value={topic.hours.labs} dim />}
                 <Cell value={topic.hours.self_study} dim />
                 <td>
                   {topic.outcome_ids.map((id) => (
@@ -192,7 +195,7 @@ export function HoursTable({
           <Cell value={program.final_attestation.hours} />
           <td className="num" style={{ color: "var(--faint)" }}>—</td>
           <td className="num" style={{ color: "var(--faint)" }}>—</td>
-          <td className="num" style={{ color: "var(--faint)" }}>—</td>
+          {labs && <td className="num" style={{ color: "var(--faint)" }}>—</td>}
           <td className="num" style={{ color: "var(--faint)" }}>—</td>
           <td />
         </tr>
@@ -207,7 +210,7 @@ export function HoursTable({
           </td>
           <Cell value={sum.lectures} />
           <Cell value={sum.practice} />
-          <Cell value={sum.labs} />
+          {labs && <Cell value={sum.labs} />}
           <Cell value={sum.self_study} />
           <td>
             <motion.span

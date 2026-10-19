@@ -198,6 +198,15 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     # Так запуск в чужой среде не скатывается на заглушку из-за забытой переменной.
     wants_live = s.llm_provider in ("", "openai_compat")
     if wants_live and s.llm_api_key and s.llm_model:
+        # Ключ уходит в HTTP-заголовок, а там допустима только латиница.
+        # Живой случай: вместо ключа вставили подсказку «ВАШ_КЛЮЧ» — и
+        # каждый запрос падал с «'ascii' codec can't encode», по которому
+        # не догадаться, что дело в ключе.
+        if not s.llm_api_key.isascii() or any(ch.isspace() for ch in s.llm_api_key):
+            raise ConfigError(
+                "ключ модели содержит кириллицу или пробелы — похоже, вместо ключа "
+                "подставлен текст-подсказка. Проверьте OPENAI_API_KEY (или LLM_API_KEY)"
+            )
         if not s.llm_base_url:
             raise ConfigError(
                 "задан ключ модели, но не задан её адрес: укажите OPENAI_BASE_URL "

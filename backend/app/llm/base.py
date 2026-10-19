@@ -35,8 +35,31 @@ class Completion:
     model: str = ""
 
 
+#: Как выглядят ключи и заголовки авторизации в тексте ошибок. Шлюзы любят
+#: возвращать в ответе то, что им прислали, и ключ доехал бы до интерфейса,
+#: журнала и телеметрии.
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer|api-key)\s+[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"\b(?:sk|hub|AQVN)[-_A-Za-z0-9]{10,}"),
+)
+
+
+def redact(text: str, *secrets: str) -> str:
+    """Убрать ключи из текста, который увидит человек или запишет журнал."""
+    for secret in secrets:
+        if secret and len(secret) >= 6:
+            text = text.replace(secret, "***")
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda m: m.group(0).split()[0] + " ***" if " " in m.group(0) else "***", text)
+    return text
+
+
 class LLMError(RuntimeError):
-    pass
+    """Сбой обращения к модели. Текст очищен от ключей при создании —
+    поэтому его можно показывать в интерфейсе и писать в журнал."""
+
+    def __init__(self, message: str = "", *secrets: str) -> None:
+        super().__init__(redact(str(message), *secrets))
 
 
 class LLMProvider(ABC):

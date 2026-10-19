@@ -38,6 +38,7 @@ try:
 except ConfigError as exc:
     _refuse_to_start(exc)
 
+from app.llm.base import redact  # noqa: E402
 from app.llm.metered import MeteredProvider, current_session  # noqa: E402
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
@@ -163,6 +164,15 @@ class TopicPatchIn(BaseModel):
 class HoursPatchIn(BaseModel):
     module_hours: dict[str, float] | None = None  # {"M-1": 12, ...}
     topic_hours: dict[str, dict[str, float]] | None = None
+
+
+def _safe(exc: BaseException) -> str:
+    """Текст ошибки, который можно показать человеку и записать в сессию.
+
+    Ошибки провайдера уже очищены, но падать может и не провайдер — ключ не
+    должен доехать до интерфейса ни при каком сбое.
+    """
+    return redact(str(exc), settings.llm_api_key)
 
 
 def _session_or_404(session_id: str) -> Session:
@@ -309,13 +319,13 @@ async def create_session(payload: CreateSessionIn, request: Request) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — наружу уходит понятная ошибка
         session.stage = Stage.FAILED
-        session.error = str(exc)
+        session.error = _safe(exc)
         store.save(session)
         record.action(
             session_id=session.id, device_id=session.device_id,
-            kind="intake_failed", error=str(exc),
+            kind="intake_failed", error=_safe(exc),
         )
-        raise HTTPException(502, f"модель недоступна: {exc}") from exc
+        raise HTTPException(502, f"модель недоступна: {_safe(exc)}") from exc
     session.usage.add(usage)
     session.request = intake.request
     session.questions = intake.questions
@@ -450,12 +460,12 @@ async def make_skeleton(session_id: str) -> dict:
             )
         except Exception as exc:  # noqa: BLE001
             session.stage = Stage.FAILED
-            session.error = str(exc)
+            session.error = _safe(exc)
             spent = session.finish_phase()
             store.save(session)
             _record_run(session, "skeleton", phase_started, spent, False,
-                        calls_before, tokens_before, str(exc))
-            raise HTTPException(502, f"не удалось собрать каркас: {exc}") from exc
+                        calls_before, tokens_before, _safe(exc))
+            raise HTTPException(502, f"не удалось собрать каркас: {_safe(exc)}") from exc
         session.usage.add(usage)
         session.program = program
         session.report = validate_program(program, stage="skeleton")
@@ -586,13 +596,13 @@ async def _run_content(session: Session, payload: ContentIn) -> None:
         record.findings(session_id=session.id, check_stage="full", report=session.report)
     except Exception as exc:  # noqa: BLE001
         session.stage = Stage.FAILED
-        session.error = str(exc)
+        session.error = _safe(exc)
         spent = session.finish_phase()
-        session.log("content", f"Ошибка генерации: {exc}", level="error")
+        session.log("content", f"Ошибка генерации: {_safe(exc)}", level="error")
         _record_run(session, "content", phase_started, spent, False,
-                    calls_before, tokens_before, str(exc))
+                    calls_before, tokens_before, _safe(exc))
         record.stage(session_id=session.id, device_id=session.device_id, name="failed",
-                     note=str(exc)[:200])
+                     note=_safe(exc)[:200])
     store.save(session)
 
 
@@ -785,7 +795,7 @@ async def refresh_session(session_id: str) -> dict:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"не удалось проверить актуальность: {exc}") from exc
+        raise HTTPException(502, f"не удалось проверить актуальность: {_safe(exc)}") from exc
 
     session.usage.add(usage)
     for finding in report.findings:
@@ -827,7 +837,7 @@ async def refresh_uploaded(file: UploadFile) -> dict:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"не удалось проверить актуальность: {exc}") from exc
+        raise HTTPException(502, f"не удалось проверить актуальность: {_safe(exc)}") from exc
 
     return _refresh_response(report, usage)
 
@@ -870,12 +880,12 @@ async def adapt(session_id: str, payload: AdaptIn, request: Request) -> dict:
         raise HTTPException(400, str(exc)) from None
     except Exception as exc:  # noqa: BLE001
         target.stage = Stage.FAILED
-        target.error = str(exc)
+        target.error = _safe(exc)
         spent = target.finish_phase()
         store.save(target)
         _record_run(target, "adapt", phase_started, spent, False,
-                    calls_before, tokens_before, str(exc))
-        raise HTTPException(502, f"не удалось адаптировать программу: {exc}") from exc
+                    calls_before, tokens_before, _safe(exc))
+        raise HTTPException(502, f"не удалось адаптировать программу: {_safe(exc)}") from exc
 
     target.usage.add(usage)
     target.program = program
@@ -945,7 +955,7 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
                 provider, payload.text, references=session.references
             )
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"модель недоступна: {exc}") from exc
+            raise HTTPException(502, f"модель недоступна: {_safe(exc)}") from exc
         session.usage.add(usage)
         session.request = intake.request
         session.questions = intake.questions
@@ -992,12 +1002,12 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
             )
         except Exception as exc:  # noqa: BLE001
             session.stage = Stage.FAILED
-            session.error = str(exc)
+            session.error = _safe(exc)
             spent = session.finish_phase()
             store.save(session)
             _record_run(session, "skeleton", phase_started, spent, False,
-                        calls_before, tokens_before, str(exc))
-            raise HTTPException(502, f"не удалось собрать каркас: {exc}") from exc
+                        calls_before, tokens_before, _safe(exc))
+            raise HTTPException(502, f"не удалось собрать каркас: {_safe(exc)}") from exc
         session.usage.add(usage)
         session.program = program
         session.report = validate_program(program, stage="skeleton")

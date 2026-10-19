@@ -20,6 +20,8 @@ services:
       LLM_MAX_PARALLEL: ${LLM_MAX_PARALLEL:-2}
       # 1 — повторные одинаковые запросы берутся с диска, режим отладки.
       LLM_CACHE: ${LLM_CACHE:-0}
+      LLM_CACHE_TTL_HOURS: ${LLM_CACHE_TTL_HOURS:-24}
+      LLM_CACHE_MAX_FILES: ${LLM_CACHE_MAX_FILES:-2000}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
       # Задержка офлайн-демо, мс: иначе прогресс генерации не успевает показаться
       MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-0}

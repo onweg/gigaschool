@@ -116,6 +116,13 @@ class Settings(BaseModel):
     llm_json_mode: bool = Field(default_factory=lambda: os.getenv("LLM_JSON_MODE", "1") == "1")
     #: Кэш ответов модели на диске: повторный прогон не тратит бюджет.
     llm_cache: bool = Field(default_factory=lambda: os.getenv("LLM_CACHE", "0") == "1")
+    #: Сколько часов живёт запись кэша. В нём лежат тексты программ —
+    #: хранить их вечно незачем.
+    llm_cache_ttl_hours: int = Field(default_factory=lambda: _number("LLM_CACHE_TTL_HOURS", "24"))
+    #: Предел числа записей: кэш не должен расти без конца.
+    llm_cache_max_files: int = Field(
+        default_factory=lambda: _number("LLM_CACHE_MAX_FILES", "2000")
+    )
     #: Дополнительные разрешённые хосты, через запятую. Разрешают конкретный
     #: домен, а не снимают проверку целиком: выключателя «любой адрес» нет
     #: намеренно — опция, которая открывает запрещённые API, рано или поздно
@@ -215,7 +222,12 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
         if s.llm_cache:
             from app.llm.cache import CachedProvider
 
-            return CachedProvider(provider, Path(s.data_dir) / "llm-cache")
+            return CachedProvider(
+                provider,
+                Path(s.data_dir) / "llm-cache",
+                ttl_hours=s.llm_cache_ttl_hours,
+                max_files=s.llm_cache_max_files,
+            )
         return provider
 
     # Заглушка — только для тестов и офлайн-демо. Если ключ задан, а провайдер
@@ -240,6 +252,8 @@ _RANGES = {
     "max_reference_mb": (1, 200),
     "reference_max_chars": (500, 100_000),
     "max_messages": (10, 1000),
+    "llm_cache_ttl_hours": (1, 24 * 30),
+    "llm_cache_max_files": (10, 100_000),
 }
 
 

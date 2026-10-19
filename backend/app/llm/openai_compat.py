@@ -18,6 +18,27 @@ from app.llm.base import Completion, LLMError, LLMProvider, Usage
 #: Коды, после которых есть смысл повторить: перегруз шлюза и лимит запросов.
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 
+#: Секунды на установку соединения, отправку запроса и ожидание свободного
+#: соединения. Чтение ответа ограничено LLM_TIMEOUT: модель пишет долго законно.
+CONNECT_TIMEOUT = 10.0
+WRITE_TIMEOUT = 30.0
+POOL_TIMEOUT = 30.0
+
+#: Что значит код ответа для человека — чтобы в интерфейсе было понятно,
+#: чинить ключ, адрес или ждать.
+_REASONS = {
+    400: "шлюз отклонил запрос",
+    401: "ключ модели не подошёл — проверьте OPENAI_API_KEY",
+    403: "у ключа нет доступа к этой модели",
+    404: "модель или адрес не найдены — проверьте OPENAI_MODEL и OPENAI_BASE_URL",
+    413: "запрос слишком большой для модели",
+    422: "шлюз не принял параметры запроса",
+}
+
+
+def _explain(status: int) -> str:
+    return _REASONS.get(status, f"шлюз ответил ошибкой {status}")
+
 
 class OpenAICompatProvider(LLMProvider):
     def __init__(
@@ -99,19 +120,43 @@ class OpenAICompatProvider(LLMProvider):
         в одну и ту же секунду и снова получают 429.
         """
         last = ""
+        # Таймауты раздельно: до недоступного шлюза достучаться не выйдет и за
+        # три минуты — это видно за секунды; а ответ на длинный промпт модель
+        # законно пишет долго, его ждём полный срок.
+        timeout = httpx.Timeout(
+            connect=CONNECT_TIMEOUT, read=self.timeout, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT
+        )
         for attempt in range(self.max_retries):
+            after = None
             async with self._gate:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.post(
-                        f"{self.base_url}/chat/completions", json=payload, headers=headers
-                    )
-                if response.status_code < 400:
-                    return response.json()
-                last = f"HTTP {response.status_code} — {response.text[:300]}"
-                if response.status_code not in RETRYABLE:
-                    raise LLMError(f"{self.name}: {last}")
-                # Сервер может сам сказать, сколько ждать.
-                after = response.headers.get("retry-after")
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(
+                            f"{self.base_url}/chat/completions", json=payload, headers=headers
+                        )
+                except httpx.TimeoutException as exc:
+                    # Шлюз не ответил вовремя — та же ситуация, что 504: повторяем.
+                    last = f"нет ответа за отведённое время ({type(exc).__name__})"
+                    response = None
+                except httpx.TransportError as exc:
+                    # Соединение не установилось или оборвалось. Раньше это
+                    # улетало сырым исключением httpx без повтора и без объяснения.
+                    last = f"сеть недоступна: {exc.__class__.__name__}"
+                    response = None
+                if response is not None:
+                    if response.status_code < 400:
+                        try:
+                            return response.json()
+                        except ValueError:
+                            raise LLMError(
+                                f"{self.name}: шлюз вернул не JSON (HTTP {response.status_code})",
+                                self.api_key,
+                            ) from None
+                    last = f"HTTP {response.status_code} — {response.text[:300]}"
+                    if response.status_code not in RETRYABLE:
+                        raise LLMError(f"{self.name}: {_explain(response.status_code)}. {last}", self.api_key)
+                    # Сервер может сам сказать, сколько ждать.
+                    after = response.headers.get("retry-after")
             delay = float(after) if after and after.isdigit() else 2**attempt
             await asyncio.sleep(min(delay, 30) + random.uniform(0, 0.5))
-        raise LLMError(f"{self.name}: {last} (после {self.max_retries} попыток)")
+        raise LLMError(f"{self.name}: {last} (после {self.max_retries} попыток)", self.api_key)

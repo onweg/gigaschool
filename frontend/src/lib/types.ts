@@ -61,6 +61,8 @@ export type Finding = {
 
 export type SessionState = {
   id: string;
+  /** true — ответ собран офлайн-заглушкой, а не моделью. */
+  offline_stub?: boolean;
   stage: "created" | "clarifying" | "skeleton" | "approved" | "content" | "ready" | "failed";
   request: Record<string, unknown>;
   missing: string[];

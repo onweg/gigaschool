@@ -7,8 +7,11 @@ import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
-import { api, metricsToken, type AdaptChanges, type ParsedReference, type RefreshResult } from "./lib/api";
+import { type AdaptChanges, ApiError, type Health, type ParsedReference, type RefreshResult, api, metricsToken } from "./lib/api";
 import type { SessionState } from "./lib/types";
+
+/** Сколько неудачных опросов подряд терпим, прежде чем сказать о потере связи. */
+const POLL_FAILURES_TO_REPORT = 4;
 
 const EXPORTS = [
   { kind: "docx", label: "Программа", ext: "docx" },
@@ -28,7 +31,9 @@ const FIELD_LABEL: Record<string, string> = {
 };
 
 export function App() {
-  const [health, setHealth] = useState<{ llm_provider: string; llm_model: string } | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  // Почему агент недоступен — показываем причину, а не просто красную точку.
+  const [healthError, setHealthError] = useState<ApiError | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -50,7 +55,16 @@ export function App() {
   const sectionRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
 
   useEffect(() => {
-    api.health().then(setHealth).catch(() => setHealth(null));
+    api
+      .health()
+      .then((h) => {
+        setHealth(h);
+        setHealthError(null);
+      })
+      .catch((error) => {
+        setHealth(null);
+        setHealthError(error instanceof ApiError ? error : null);
+      });
   }, []);
 
   // Открытие по прямой ссылке и кнопка «назад» в браузере.
@@ -76,9 +90,13 @@ export function App() {
   // Пока идёт генерация содержания, подтягиваем состояние: шаги видно сразу.
   useEffect(() => {
     if (!session || session.stage !== "content") return;
+    // Разовый сбой опроса не страшен — сеть моргнула. Но если сервер молчит
+    // подряд, раньше генерация просто «висела» без объяснения.
+    let failures = 0;
     const timer = setInterval(async () => {
       try {
         const next = await api.state(session.id);
+        failures = 0;
         setSession(next);
         if (next.stage === "ready" || next.stage === "failed") clearInterval(timer);
         if (next.stage === "failed") {
@@ -86,8 +104,17 @@ export function App() {
           say("bot", `Сборка комплекта сорвалась: ${next.error || "неизвестная ошибка"}.`);
           setRetry(() => () => void approveAndFill());
         }
-      } catch {
-        clearInterval(timer);
+      } catch (error) {
+        failures += 1;
+        if (failures === POLL_FAILURES_TO_REPORT) {
+          clearInterval(timer);
+          const reason = error instanceof ApiError ? error.full : "сервер не отвечает";
+          say("sys", `Потеряна связь с агентом: ${reason}. Генерация на сервере могла продолжиться.`);
+          setRetry(() => () => {
+            setRetry(null);
+            void api.state(session.id).then(setSession).catch(() => undefined);
+          });
+        }
       }
     }, 1500);
     return () => clearInterval(timer);
@@ -130,7 +157,7 @@ export function App() {
     try {
       return await action();
     } catch (error) {
-      say("sys", `Ошибка: ${(error as Error).message}`);
+      say("sys", error instanceof ApiError ? error.full : `Ошибка: ${(error as Error).message}`);
       return null;
     } finally {
       setBusy(null);
@@ -344,7 +371,9 @@ export function App() {
               className="dot"
               style={{ color: health ? "var(--green)" : "var(--red)" }}
             />
-            {health ? `${health.llm_provider} · ${health.llm_model}` : "API недоступен"}
+            {health
+              ? `${health.llm_provider} · ${health.llm_model}`
+              : healthError?.message ?? "API недоступен"}
           </span>
           {summary && (
             <span
@@ -359,6 +388,21 @@ export function App() {
             <button disabled>EN</button>
           </div>
         </div>
+
+        {(health?.offline_stub || session?.offline_stub) && (
+          // Работу заглушки легко принять за настоящую: структура и часы
+          // у неё правильные. Поэтому говорим прямо и на каждом экране.
+          <div className="offline-banner" role="status">
+            <b>Офлайн-режим.</b> Модель не подключена: структура, часы и разделы
+            шаблона настоящие, а тексты тем, вопросы и задания — заглушки.
+            Выгрузки помечены как черновик.
+          </div>
+        )}
+        {!health && healthError && (
+          <div className="offline-banner error" role="alert">
+            <b>{healthError.message}.</b> {healthError.hint}
+          </div>
+        )}
 
         <div className="content">
           {section === "stats" ? (

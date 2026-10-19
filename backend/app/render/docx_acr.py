@@ -685,7 +685,26 @@ class AcrDocxBuilder:
                 word, explanation = SEVERITY_WORDS[severity]
                 self.para(f"«{word}» — {explanation}.", italic=True, indent=False)
 
-    def build(self, report=None) -> Document:  # noqa: ANN001 — ValidationReport
+    def offline_notice(self) -> None:
+        """Пометка на первой странице: документ собран без модели.
+
+        Структура и часы в нём настоящие, а тексты — болванки заглушки.
+        Такой файл легко принять за готовую программу, если не сказать прямо.
+        """
+        self.para(
+            "ЧЕРНОВИК ОФЛАЙН-РЕЖИМА: документ собран без языковой модели. "
+            "Структура, часы и разделы шаблона настоящие, содержание тем, "
+            "вопросы и задания — заглушки. Для работы соберите программу "
+            "заново при подключённой модели.",
+            bold=True,
+            align="center",
+            indent=False,
+        )
+        self.para("")
+
+    def build(self, report=None, *, offline: bool = False) -> Document:  # noqa: ANN001
+        if offline:
+            self.offline_notice()
         if self.p.meta.program_type is ProgramType.DPP_PK:
             self.build_dpp_pk()
         else:
@@ -694,8 +713,9 @@ class AcrDocxBuilder:
         return self.doc
 
 
-def render_docx(program: Program, report=None) -> bytes:  # noqa: ANN001
-    """Программа по шаблону АЦР. `report` добавляет приложение с автопроверкой."""
+def render_docx(program: Program, report=None, *, offline: bool = False) -> bytes:  # noqa: ANN001
+    """Программа по шаблону АЦР. `report` добавляет приложение с автопроверкой,
+    `offline` — пометку, что документ собран без модели."""
     buffer = BytesIO()
-    AcrDocxBuilder(program).build(report).save(buffer)
+    AcrDocxBuilder(program).build(report, offline=offline).save(buffer)
     return buffer.getvalue()

@@ -166,6 +166,11 @@ class HoursPatchIn(BaseModel):
     topic_hours: dict[str, dict[str, float]] | None = None
 
 
+def _offline() -> bool:
+    """Сервис работает на офлайн-заглушке, а не на модели."""
+    return provider.name.startswith("mock")
+
+
 def _safe(exc: BaseException) -> str:
     """Текст ошибки, который можно показать человеку и записать в сессию.
 
@@ -267,6 +272,9 @@ def _state(session: Session) -> dict[str, Any]:
             session.phase_started_at.isoformat() if session.phase_started_at else None
         ),
         "economics": session.economics(),
+        # Работа на заглушке не должна выглядеть как настоящая: признак едет
+        # в каждом ответе, и интерфейс показывает его плашкой.
+        "offline_stub": _offline(),
         "error": session.error,
         "unparsed": [],
         "reask": {},
@@ -1041,6 +1049,7 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
         "status": "ready",
         "session_id": session.id,
         "skeleton_auto_approved": True,
+        "offline_stub": _offline(),
         "skeleton_errors": skeleton_errors,
         "program": session.program.model_dump(mode="json"),
         "report": session.report.model_dump(mode="json") if session.report else None,
@@ -1075,7 +1084,7 @@ async def export(session_id: str, kind: str, request: Request) -> Response:
         # файл отдельно от интерфейса и должен видеть, что проверить.
         return _exported(
             session, request, "docx",
-            render_docx(program, session.report), DOCX_MIME, slug, "docx",
+            render_docx(program, session.report, offline=_offline()), DOCX_MIME, slug, "docx",
         )
     if kind == "pptx":
         if not program.lecture_plans:
@@ -1116,6 +1125,7 @@ async def export(session_id: str, kind: str, request: Request) -> Response:
                 },
             },
             "economics": session.economics(),
+            "offline_stub": _offline(),
         }
         return _exported(
             session, request, "json",

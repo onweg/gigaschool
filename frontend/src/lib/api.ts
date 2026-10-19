@@ -56,30 +56,117 @@ export const metricsToken = {
   },
 };
 
-/** Ошибка с кодом ответа: интерфейсу нужно отличить «нужен токен» от прочего. */
+/** Ошибка, понятная человеку: что случилось и что с этим делать.
+ *  `status` нужен интерфейсу, чтобы отличить «нужен токен» от прочего;
+ *  0 — до сервера не достучались вовсе. */
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly hint = ""
+  ) {
     super(message);
   }
+
+  /** Одной строкой для чата: причина и, если есть, что сделать. */
+  get full(): string {
+    return this.hint ? `${this.message}. ${this.hint}` : this.message;
+  }
+}
+
+/** Что сказать человеку по коду ответа, когда сервер сам ничего не объяснил. */
+const STATUS_TEXT: Record<number, [string, string]> = {
+  400: ["Запрос не принят", "Проверьте введённые данные"],
+  404: ["Не найдено", "Сессия могла устареть — начните новую программу"],
+  409: ["Сейчас этот шаг недоступен", "Дождитесь окончания предыдущего"],
+  413: ["Файл слишком большой", "Приложите программу поменьше или текстом"],
+  429: ["Модель перегружена", "Подождите минуту и повторите"],
+  500: ["Внутренняя ошибка агента", "Повторите; если не проходит — смотрите журнал сервера"],
+  502: ["Агент не отвечает", "Сервис перезапускается или упал — смотрите журнал сервера"],
+  503: ["Агент временно недоступен", "Повторите через минуту"],
+  504: ["Агент не успел ответить", "Генерация идёт дольше обычного — повторите"],
+};
+
+/** Разобрать неудачный ответ в человеческое объяснение.
+ *
+ *  Раньше в чат уходило «502: <html><head><title>502 Bad Gateway…» целиком:
+ *  nginx отвечает страницей, а не JSON. Теперь — причина и что делать. */
+async function explain(response: Response): Promise<ApiError> {
+  const status = response.status;
+  const [fallback, hint] = STATUS_TEXT[status] ?? [`Ошибка ${status}`, ""];
+  const body = await response.text().catch(() => "");
+
+  let detail: unknown = null;
+  try {
+    detail = JSON.parse(body).detail;
+  } catch {
+    /* не JSON — скорее всего страница ошибки прокси */
+  }
+
+  if (typeof detail === "string" && detail.trim()) {
+    // Сервер сам объяснил причину — значит он жив, и «сервис упал» было бы
+    // неправдой. Остаётся одно: модель или сеть до неё подвели — повторить.
+    return new ApiError(status, detail.trim(), status >= 500 ? "Повторите через минуту" : "");
+  }
+  if (detail && typeof detail === "object") {
+    // {error: "...", errors: [...]} — например, каркас не проходит автопроверку
+    const obj = detail as { error?: string; missing?: string[]; errors?: { message: string }[] };
+    const parts = [obj.error ?? fallback];
+    let advice = hint;
+    if (obj.missing?.length) {
+      parts.push(`не хватает: ${obj.missing.join(", ")}`);
+      advice = "Ответьте на уточняющие вопросы";
+    }
+    if (obj.errors?.length) {
+      parts.push(obj.errors.map((e) => e.message).slice(0, 3).join("; "));
+      advice = "Исправьте замечания автопроверки и повторите";
+    }
+    return new ApiError(status, parts.join(" — "), advice);
+  }
+  return new ApiError(status, fallback, hint);
+}
+
+/** Обрыв сети выглядит в браузере как «Failed to fetch» — переводим. */
+function offline(): ApiError {
+  return new ApiError(
+    0,
+    "Нет связи с сервером агента",
+    "Проверьте интернет; если он есть — сервис не запущен или недоступен"
+  );
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const token = path.startsWith("/metrics") ? metricsToken.get() : "";
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Device-Id": DEVICE_ID,
-      ...(token ? { "X-Metrics-Token": token } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new ApiError(response.status, `${response.status}: ${detail.slice(0, 300)}`);
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Id": DEVICE_ID,
+        ...(token ? { "X-Metrics-Token": token } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    throw offline();
   }
-  return (await response.json()) as T;
+  if (!response.ok) throw await explain(response);
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(response.status, "Сервер ответил не в том формате", "Повторите запрос");
+  }
 }
+
+export type Health = {
+  status: string;
+  llm_provider: string;
+  llm_model: string;
+  /** true — сервис на офлайн-заглушке: содержание программ не настоящее. */
+  offline_stub?: boolean;
+  note?: string;
+};
 
 export type AdaptChanges = {
   audience?: string;
@@ -116,20 +203,17 @@ async function upload<T>(path: string, file: File): Promise<T> {
   const form = new FormData();
   form.append("file", file);
   // Content-Type не задаём: граница multipart проставляется браузером.
-  const response = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "X-Device-Id": DEVICE_ID },
-    body: form,
-  });
-  if (!response.ok) {
-    let detail = await response.text();
-    try {
-      detail = JSON.parse(detail).detail ?? detail;
-    } catch {
-      /* ответ не JSON — показываем как есть */
-    }
-    throw new Error(detail.slice(0, 200));
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "X-Device-Id": DEVICE_ID },
+      body: form,
+    });
+  } catch {
+    throw offline();
   }
+  if (!response.ok) throw await explain(response);
   return (await response.json()) as T;
 }
 
@@ -146,7 +230,7 @@ export const metrics = {
 
 export const api = {
   parseReference: (file: File) => upload<ParsedReference>("/references/parse", file),
-  health: () => call<{ status: string; llm_provider: string; llm_model: string }>("/health"),
+  health: () => call<Health>("/health"),
   skills: () => call<{ name: string; title: string; description: string }[]>("/skills"),
   createSession: (text: string, references: string[] = []) =>
     call<SessionState>("/sessions", {

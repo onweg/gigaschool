@@ -112,6 +112,29 @@ async def fill_topic_content(
 # --------------------------------------------------------------------------- #
 # Тесты
 # --------------------------------------------------------------------------- #
+#: Под какими именами модели присылают варианты ответа.
+_OPTION_KEYS = ("options", "answers", "variants", "choices")
+
+
+def _options(raw: dict) -> list[str]:
+    """Варианты ответа, под каким бы именем модель их ни прислала."""
+    for key in _OPTION_KEYS:
+        value = raw.get(key)
+        if isinstance(value, list):
+            return [str(o).strip() for o in value if str(o).strip()]
+    return []
+
+
+def _usable_question(raw: dict) -> bool:
+    """Вопрос, который можно решить и загрузить в LMS.
+
+    Живой случай на GigaChat: вопрос пришёл без вариантов ответа, и ключ «0»
+    указывал в пустоту. Такой вопрос не исправить — только выбросить и добрать
+    новый: без условия и двух вариантов это не тестовое задание.
+    """
+    return bool(str(raw.get("stem", "")).strip()) and len(_options(raw)) >= 2
+
+
 def _valid_keys(correct: object, options: object) -> list[int]:
     """Ключи ответа, очищенные от мусора.
 
@@ -183,6 +206,8 @@ async def generate_tests(
         topic, data, usage = result
         usage_total += usage
         for raw in as_dicts(data.get("questions"), key="text"):
+            if not _usable_question(raw):
+                continue
             counter += 1
             program.test_questions.append(
                 TestQuestion(
@@ -193,8 +218,8 @@ async def generate_tests(
                         if o in {x.id for x in program.outcomes}
                     ] or list(topic.outcome_ids),
                     stem=str(raw.get("stem", "")).strip(),
-                    options=[str(o) for o in raw.get("options") or []],
-                    correct=_valid_keys(raw.get("correct"), raw.get("options")),
+                    options=_options(raw),
+                    correct=_valid_keys(raw.get("correct"), _options(raw)),
                     explanation=str(raw.get("explanation", "") or ""),
                     difficulty=raw.get("difficulty") or "medium",
                 )
@@ -205,9 +230,9 @@ async def generate_tests(
     # Модель регулярно возвращает меньше вопросов, чем просили (GigaChat на
     # «тест из 10 вопросов» отдал 4). Добираем недостающее повторным вызовом
     # по темам, где вопросов меньше квоты: число вопросов — требование
-    # методиста, а не пожелание.
-    if total:
-        usage_total += await _top_up_questions(provider, program, topics, quotas, counter)
+    # методиста, а не пожелание. Добираем и без явного числа: негодные вопросы
+    # (без вариантов ответа) выброшены выше, и тема не должна остаться пустой.
+    usage_total += await _top_up_questions(provider, program, topics, quotas, counter)
     return usage_total
 
 
@@ -253,8 +278,10 @@ async def _top_up_questions(
                 continue
             topic, data, usage = result
             usage_total += usage
-            debt = dict(debts).get(topic, 0)
-            for raw in as_dicts(data.get("questions"), key="text")[:debt]:
+            # Тема — изменяемая модель и ключом словаря быть не может; сверяем по id.
+            debt = next((n for t, n in debts if t.id == topic.id), 0)
+            usable = [q for q in as_dicts(data.get("questions"), key="text") if _usable_question(q)]
+            for raw in usable[:debt]:
                 counter += 1
                 program.test_questions.append(
                     TestQuestion(
@@ -262,8 +289,8 @@ async def _top_up_questions(
                         topic_id=topic.id,
                         outcome_ids=list(topic.outcome_ids),
                         stem=str(raw.get("stem", "")).strip(),
-                        options=[str(o) for o in raw.get("options") or []],
-                        correct=_valid_keys(raw.get("correct"), raw.get("options")),
+                        options=_options(raw),
+                        correct=_valid_keys(raw.get("correct"), _options(raw)),
                         explanation=str(raw.get("explanation", "") or ""),
                         difficulty=raw.get("difficulty") or "medium",
                     )

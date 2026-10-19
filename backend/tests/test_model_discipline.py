@@ -341,3 +341,58 @@ async def test_topics_without_outcomes_get_linked(provider: MockProvider) -> Non
     assert all(t.outcome_ids for t in program.all_topics())
     codes = [f.code for f in validate_program(program, stage="skeleton").findings]
     assert "COVERAGE_TOPIC_NO_OUTCOME" not in codes
+
+
+@pytest.mark.anyio
+async def test_question_without_options_is_replaced(provider: MockProvider) -> None:
+    """Живой случай на GigaChat: вопрос пришёл без вариантов ответа.
+
+    Ключ «0» указывал в пустоту — такой вопрос нельзя ни решить, ни загрузить
+    в LMS. Его выбрасываем и добираем новый, чтобы тема не осталась без теста.
+    """
+    from app.llm.base import Completion, Usage
+    from app.pipeline.content import generate_tests
+
+    calls = {"n": 0}
+
+    class Flaky(MockProvider):
+        async def complete(self, *, system: str, user: str, **kwargs):  # noqa: ANN003, ANN201
+            if "SKILL:tests" in system:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    # первый ответ: один нормальный вопрос и один без вариантов
+                    return Completion(
+                        text='{"questions": ['
+                             '{"stem": "Хороший?", "options": ["да", "нет"], "correct": [0]},'
+                             '{"stem": "Без вариантов", "options": [], "correct": [0]}]}',
+                        usage=Usage(),
+                        model="flaky",
+                    )
+            return await super().complete(system=system, user=user, **kwargs)
+
+    request = ProgramRequest(
+        title="Т", program_type=ProgramType.DPP_PK, total_hours=36,
+        audience="а", entry_level="б",
+    )
+    program, _ = await build_skeleton(provider, request)
+    topic = program.all_topics()[0]
+
+    await generate_tests(Flaky(), program, [topic], per_topic=2)
+
+    assert len(program.test_questions) == 2, "негодный вопрос должен быть заменён"
+    for q in program.test_questions:
+        assert len(q.options) >= 2
+        assert all(0 <= k < len(q.options) for k in q.correct)
+
+
+def test_options_under_other_names_are_accepted() -> None:
+    """Модели называют варианты по-разному — терять из-за этого вопрос нельзя."""
+    from app.pipeline.content import _options, _usable_question
+
+    for key in ("options", "answers", "variants", "choices"):
+        raw = {"stem": "Вопрос?", key: ["а", "б", "в"]}
+        assert _options(raw) == ["а", "б", "в"]
+        assert _usable_question(raw)
+
+    assert not _usable_question({"stem": "Вопрос?", "options": ["один"]})
+    assert not _usable_question({"stem": "", "options": ["а", "б"]})

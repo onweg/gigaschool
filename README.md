@@ -192,7 +192,7 @@ POST /api/refresh/upload                               то же для стар
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 253 теста, заглушки, без сети
+python -m pytest tests -q                   # 256 тестов, заглушки, без сети
 python scripts/run_open_requests.py         # 5 запросов кейса, 92 проверки по чек-листам
 ```
 

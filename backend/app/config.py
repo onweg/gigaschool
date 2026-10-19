@@ -190,7 +190,9 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     s = get_settings()
     _check_ranges(s)
     for name, advice in RETIRED_ENV.items():
-        if os.getenv(name):
+        # «0» и «false» ничего не включали — останавливать из-за них запуск
+        # незачем: старый Makefile передавал LLM_ALLOW_ANY_HOST=0 всегда.
+        if os.getenv(name, "").strip().lower() not in ("", "0", "false", "no"):
             raise ConfigError(f"{name} больше не поддерживается: {advice}")
     # Провайдер можно не задавать: есть ключ и модель — работаем с моделью.
     # Так запуск в чужой среде не скатывается на заглушку из-за забытой переменной.

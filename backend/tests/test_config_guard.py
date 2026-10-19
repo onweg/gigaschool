@@ -335,3 +335,18 @@ def test_cache_is_reported_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
     assert any("LLM_CACHE=1" in w for w in check_config())
+
+
+@pytest.mark.parametrize("value", ["0", "false", ""])
+def test_retired_flag_switched_off_does_not_block(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Старый Makefile всегда передавал LLM_ALLOW_ANY_HOST=0 — это не повод
+    отказываться от запуска: выключенный флаг ничего не открывал."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://hub.gigaschool.ru/api/v1/llm/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
+    monkeypatch.setenv("LLM_ALLOW_ANY_HOST", value)
+    get_settings.cache_clear()
+
+    assert build_provider().name == "openai_compat"

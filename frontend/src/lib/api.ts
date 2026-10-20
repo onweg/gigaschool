@@ -159,6 +159,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+export type PendingSource = {
+  kind: "prof_standard" | "legal_act" | "source";
+  key: string;
+  title: string;
+  what_to_check: string;
+  check_url: string;
+};
+
 export type Health = {
   status: string;
   llm_provider: string;
@@ -264,6 +272,15 @@ export const api = {
   /** Проверить программу на устаревшие темы и инструменты. */
   refresh: (id: string) =>
     call<RefreshResult>(`/sessions/${id}/refresh`, { method: "POST" }),
+  /** Источники, которые агент не подтвердил сам, — с адресом, где проверить. */
+  pendingSources: (id: string) =>
+    call<{ items: PendingSource[] }>(`/sessions/${id}/sources/pending`),
+  /** Решение методиста: подтвердить после проверки или убрать из программы. */
+  reviewSource: (id: string, kind: string, key: string, action: "confirm" | "remove") =>
+    call<SessionState & { pending_sources: PendingSource[] }>(`/sessions/${id}/sources/review`, {
+      method: "POST",
+      body: JSON.stringify({ kind, key, action }),
+    }),
   state: (id: string) => call<SessionState>(`/sessions/${id}`),
   exportUrl: (id: string, kind: string) => `${BASE}/sessions/${id}/export/${kind}`,
 };

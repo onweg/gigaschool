@@ -5,6 +5,7 @@ import { HoursTable } from "./components/HoursTable";
 import { Kit } from "./components/Kit";
 import { AnimatedNumber, Reveal } from "./components/Motion";
 import { Report } from "./components/Report";
+import { SourceCheck } from "./components/SourceCheck";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
 import { type AdaptChanges, ApiError, type Health, type ParsedReference, type RefreshResult, api, metricsToken } from "./lib/api";
@@ -533,6 +534,7 @@ export function App() {
                     )}
                   </h3>
                   <Report findings={session?.report?.findings ?? []} />
+                  {session && <SourceCheck session={session} onChange={setSession} />}
                 </div>
               </Reveal>
 

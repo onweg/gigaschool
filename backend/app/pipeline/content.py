@@ -455,6 +455,22 @@ def link_outcomes_to_assessments(program: Program) -> int:
 
     Возвращает число исправленных связей — для журнала и отчёта.
     """
+    fixed = 0
+    # Ссылки на РО, которых в программе нет (модель придумала номер или РО
+    # убрали при правке), — обрыв трассировки. Убираем, а привязку к
+    # настоящему РО темы восстанавливает цикл ниже.
+    known = {o.id for o in program.outcomes}
+    for item in [*program.test_questions, *program.seminar_tasks]:
+        clean = [oid for oid in dict.fromkeys(item.outcome_ids) if oid in known]
+        if len(clean) != len(item.outcome_ids):
+            fixed += len(item.outcome_ids) - len(clean)
+            item.outcome_ids = clean
+        if not item.outcome_ids and item.topic_id:
+            topic = program.topic_by_id(item.topic_id)
+            if topic and topic.outcome_ids:
+                item.outcome_ids = [oid for oid in topic.outcome_ids if oid in known][:1]
+                fixed += bool(item.outcome_ids)
+
     topics_by_outcome: dict[str, list[str]] = {o.id: [] for o in program.outcomes}
     for topic in program.all_topics():
         for oid in topic.outcome_ids:
@@ -470,7 +486,6 @@ def link_outcomes_to_assessments(program: Program) -> int:
     for topic_id, module_index in module_of_topic.items():
         topics_of_module.setdefault(module_index, set()).add(topic_id)
 
-    fixed = 0
     for outcome in program.outcomes:
         topic_ids = topics_by_outcome.get(outcome.id) or []
         if not topic_ids:

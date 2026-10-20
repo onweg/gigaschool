@@ -365,3 +365,105 @@ def test_placeholder_instead_of_key_is_explained(
 
     with pytest.raises(ConfigError, match="текст-подсказка"):
         build_provider()
+
+
+# --- Журнал и проверки допуска (разбор 20 октября) ---------------------------
+# «Конфигурация ограничений по шлюзам и хостам требует дополнительного
+# логирования и проверок». Теперь видно, каким правилом разрешён адрес, а
+# ключ не уходит ни по адресу с паролем, ни по перенаправлению, ни через
+# провайдер, созданный в обход конфигурации.
+
+
+def test_rule_names_its_source() -> None:
+    from app.config import host_rule
+
+    assert host_rule("https://foundation-models.api.cloud.ru/v1") == "cloud.ru (список кейса)"
+    assert host_rule("https://llm.example-platform.ru/v1", ("llm.example-platform.ru",)) == (
+        "llm.example-platform.ru (LLM_EXTRA_HOSTS)"
+    )
+    assert host_rule("https://api.openai.com/v1") is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:secret@foundation-models.api.cloud.ru/v1",  # пароль уехал бы в журнал
+        "ftp://foundation-models.api.cloud.ru/v1",
+        "foundation-models.api.cloud.ru/v1",  # без схемы
+    ],
+)
+def test_malformed_url_refuses_to_start(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", url)
+    monkeypatch.setenv("OPENAI_MODEL", "m")
+    with pytest.raises(ConfigError):
+        build_provider()
+
+
+def test_startup_log_shows_host_and_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import describe_config
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    line = next(x for x in describe_config() if x.startswith("проверка хоста"))
+    assert "foundation-models.api.cloud.ru" in line
+    assert "cloud.ru (список кейса)" in line
+
+
+def test_plain_http_to_remote_host_is_warned(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import check_config
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://foundation-models.api.cloud.ru/v1")
+    assert any("http://" in w for w in check_config())
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8080/v1")
+    get_settings.cache_clear()
+    assert not any("http://" in w for w in check_config())
+
+
+def test_provider_refuses_foreign_host_even_without_config(caplog: pytest.LogCaptureFixture) -> None:
+    from app.config import ALLOWED_LLM_HOSTS
+    from app.llm.base import LLMError
+    from app.llm.openai_compat import OpenAICompatProvider
+
+    with pytest.raises(LLMError), caplog.at_level("WARNING", logger="agent.llm"):
+        OpenAICompatProvider(
+            base_url="https://api.openai.com/v1", api_key="k", model="m",
+            allowed_hosts=ALLOWED_LLM_HOSTS,
+        )
+    assert "api.openai.com" in caplog.text
+
+
+def test_built_provider_carries_host_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "m")
+    provider = build_provider()
+    assert provider.host == "foundation-models.api.cloud.ru"
+
+
+@pytest.mark.anyio
+async def test_redirect_is_not_followed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Шлюз ответил 307 на чужой хост — ключ туда не идёт, ошибка объясняет почему."""
+    import httpx
+
+    from app.llm.base import LLMError
+    from app.llm.openai_compat import OpenAICompatProvider
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        return httpx.Response(307, headers={"location": "https://evil.example.com/v1/chat/completions"})
+
+    real = httpx.AsyncClient
+
+    def client(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    provider = OpenAICompatProvider(
+        base_url="https://foundation-models.api.cloud.ru/v1", api_key="k", model="m",
+    )
+    with pytest.raises(LLMError, match="перенаправляет"):
+        await provider.complete(system="s", user="u")
+    assert seen == ["foundation-models.api.cloud.ru"]

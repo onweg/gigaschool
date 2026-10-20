@@ -754,6 +754,33 @@ tr.clickable:hover td { background: var(--surface-3); }
   color: var(--faint);
 }
 
+/* ------------------------------------- проверка источников методистом */
+.source-check { margin-top: 18px; }
+.source-check.done { display: flex; gap: 9px; align-items: center; font-size: 13px; color: var(--green); }
+.source-check-head {
+  margin-bottom: 8px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.source-item {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.source-title { font-size: 13.5px; }
+.source-what { margin-top: 3px; font-size: 12px; color: var(--muted); }
+.source-what a { color: var(--green); text-decoration: none; }
+.source-actions { display: flex; gap: 8px; flex: none; }
+@media (max-width: 720px) {
+  .source-item { flex-direction: column; align-items: stretch; }
+  .source-actions { justify-content: flex-end; }
+}
+
 /* ------------------------------------------------- офлайн и сбои */
 .offline-banner {
   margin: 0 0 14px;

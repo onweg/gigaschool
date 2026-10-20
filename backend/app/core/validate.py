@@ -81,19 +81,15 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                 hint="Добавить в модуль хотя бы одну тему или удалить пустой модуль",
             )
             continue
-        topics_sum = Hours.sum([t.hours for t in module.topics])
-        for kind in kinds:
-            got = getattr(topics_sum, kind)
-            want = getattr(module.hours, kind)
-            if abs(got - want) > EPS:
-                report.add(
-                    "HOURS_TOPIC_SUM",
-                    Severity.ERROR,
-                    f"Модуль {module.index} «{module.title}»: сумма тем по «{kind}» "
-                    f"= {got} ч, в строке модуля {want} ч",
-                    path=f"modules[{mi}].hours.{kind}",
-                    hint="Пересобрать часы тем солвером (core.hours.rebalance_topics)",
-                )
+        for kind, (got, want) in module.hours_gaps().items():
+            report.add(
+                "HOURS_TOPIC_SUM",
+                Severity.ERROR,
+                f"Модуль {module.index} «{module.title}»: сумма тем по «{kind}» "
+                f"= {got} ч, в строке модуля {want} ч",
+                path=f"modules[{mi}].hours.{kind}",
+                hint="Пересобрать часы тем солвером (core.hours.rebalance_topics)",
+            )
 
     for mi, module in enumerate(program.modules):
         if abs(module.hours.total - sum(
@@ -107,8 +103,9 @@ def check_hours(program: Program, report: ValidationReport) -> None:
                 hint="Исправить часы в строке: сумма по видам работы должна равняться графе «Всего»",
             )
 
-    grand = program.grand_total
-    if abs(grand - program.meta.total_hours) > EPS:
+    balance = program.hours_check
+    grand = balance["total"]
+    if abs(balance["gap"]) > EPS:
         report.add(
             "HOURS_GRAND_TOTAL",
             Severity.ERROR,
@@ -189,13 +186,18 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
         for oid in topic.outcome_ids:
             topics_by_outcome.setdefault(oid, []).append(topic.code)
 
+    # Ссылки на несуществующие РО здесь не считаем — их отдельно ловит
+    # ASSESSMENT_UNKNOWN_OUTCOME, иначе такой РО-призрак дал бы ещё и
+    # ложное «проверяется менее чем двумя средствами».
     assess_by_outcome: dict[str, set[str]] = {o.id: set() for o in program.outcomes}
     for q in program.test_questions:
         for oid in q.outcome_ids:
-            assess_by_outcome.setdefault(oid, set()).add(AssessmentKind.TEST.value)
+            if oid in assess_by_outcome:
+                assess_by_outcome[oid].add(AssessmentKind.TEST.value)
     for t in program.seminar_tasks:
         for oid in t.outcome_ids:
-            assess_by_outcome.setdefault(oid, set()).add(AssessmentKind.SEMINAR.value)
+            if oid in assess_by_outcome:
+                assess_by_outcome[oid].add(AssessmentKind.SEMINAR.value)
     # Итоговая аттестация покрывает все РО, если так заявлено
     if program.final_attestation.form:
         for oid in assess_by_outcome:
@@ -240,6 +242,134 @@ def check_coverage(program: Program, report: ValidationReport) -> None:
                 Severity.WARNING,
                 f"Тема {topic.code} «{topic.title}» не привязана ни к одному РО",
                 hint="Привязать тему к результату обучения или убрать тему из плана",
+            )
+
+
+# --------------------------------------------------------------------------- #
+# 2а. Связи компетенция ↔ результат обучения ↔ оценочное средство
+# --------------------------------------------------------------------------- #
+def check_links(program: Program, report: ValidationReport) -> None:
+    """Сквозная трассировка: компетенция раскрывается результатами обучения,
+    а те проверяются оценочными средствами. Обрыв в любом звене означает,
+    что компетенцию заявили, но не учат или не проверяют.
+
+    Разбор прогона 20 октября: «недостатки в покрытии сложных сценариев
+    связей компетенций и оценочных средств». Сценарии ниже — именно такие:
+    ссылки в никуда, расхождение двух сторон связи, компетенция, которую
+    проверяет только итоговая аттестация.
+    """
+    outcomes = {o.id: o for o in program.outcomes}
+    competencies = {c.id: c for c in program.competencies}
+    standards = {s.code for s in program.prof_standards}
+    owned: dict[str, str] = {}
+
+    for ci, comp in enumerate(program.competencies):
+        path = f"competencies[{ci}]"
+        unknown = [oid for oid in comp.outcome_ids if oid not in outcomes]
+        if unknown:
+            report.add(
+                "COMPETENCY_UNKNOWN_OUTCOME",
+                Severity.ERROR,
+                f"Компетенция {comp.id} ссылается на несуществующие РО: {', '.join(unknown)}",
+                path=f"{path}.outcome_ids",
+                hint="Убрать ссылку или добавить этот результат обучения в раздел РО",
+            )
+        known = [oid for oid in comp.outcome_ids if oid in outcomes]
+        if not known:
+            report.add(
+                "COMPETENCY_NO_OUTCOMES",
+                Severity.ERROR,
+                f"Компетенция {comp.id} «{comp.title[:60]}» не раскрыта ни одним результатом обучения",
+                path=f"{path}.outcome_ids",
+                hint="Привязать к компетенции знания, умения или навыки из раздела РО",
+            )
+        for oid in known:
+            owned.setdefault(oid, comp.id)
+            linked = outcomes[oid].competency_id
+            if linked and linked != comp.id:
+                report.add(
+                    "COMPETENCY_LINK_MISMATCH",
+                    Severity.WARNING,
+                    f"РО {oid} указан в компетенции {comp.id}, но сам ссылается на {linked}",
+                    path=f"{path}.outcome_ids",
+                    hint="Выбрать одну компетенцию для результата обучения и исправить обе стороны связи",
+                )
+        if comp.prof_standard_code and comp.prof_standard_code not in standards:
+            report.add(
+                "COMPETENCY_UNKNOWN_STANDARD",
+                Severity.WARNING,
+                f"Компетенция {comp.id} опирается на профстандарт {comp.prof_standard_code}, "
+                f"которого нет в разделе профстандартов",
+                path=f"{path}.prof_standard_code",
+                hint="Добавить профстандарт в программу или снять ссылку с компетенции",
+            )
+
+    for oi, outcome in enumerate(program.outcomes):
+        if outcome.competency_id and outcome.competency_id not in competencies:
+            report.add(
+                "OUTCOME_UNKNOWN_COMPETENCY",
+                Severity.ERROR,
+                f"РО {outcome.id} ссылается на несуществующую компетенцию {outcome.competency_id}",
+                path=f"outcomes[{oi}].competency_id",
+                hint="Привязать РО к компетенции из карты компетенций",
+            )
+        elif program.competencies and outcome.id not in owned and not outcome.competency_id:
+            report.add(
+                "OUTCOME_NO_COMPETENCY",
+                Severity.WARNING,
+                f"РО {outcome.id} не относится ни к одной компетенции",
+                path=f"outcomes[{oi}]",
+                hint="Указать, какую компетенцию формирует этот результат обучения",
+            )
+
+    items = [("test_questions", q) for q in program.test_questions] + [
+        ("seminar_tasks", s) for s in program.seminar_tasks
+    ]
+    if not items:
+        return  # каркас: оценочных средств ещё нет, проверять нечего
+
+    topic_ids = {t.id for t in program.all_topics()}
+    assessed: set[str] = set()
+    for section, item in items:
+        unknown = [oid for oid in item.outcome_ids if oid not in outcomes]
+        if unknown:
+            report.add(
+                "ASSESSMENT_UNKNOWN_OUTCOME",
+                Severity.ERROR,
+                f"{item.id} проверяет несуществующие РО: {', '.join(unknown)}",
+                path=f"{section}.{item.id}",
+                hint="Перепривязать оценочное средство к РО его темы",
+            )
+        if not item.outcome_ids:
+            report.add(
+                "ASSESSMENT_NO_OUTCOME",
+                Severity.WARNING,
+                f"{item.id} не привязан ни к одному результату обучения",
+                path=f"{section}.{item.id}",
+                hint="Указать, какой РО проверяет это оценочное средство",
+            )
+        if item.topic_id and item.topic_id not in topic_ids:
+            report.add(
+                "ASSESSMENT_UNKNOWN_TOPIC",
+                Severity.WARNING,
+                f"{item.id} относится к теме {item.topic_id}, которой нет в плане",
+                path=f"{section}.{item.id}",
+                hint="Перенести оценочное средство в существующую тему или удалить",
+            )
+        assessed.update(oid for oid in item.outcome_ids if oid in outcomes)
+
+    # Итоговая аттестация «покрывает всё» по определению, поэтому здесь её
+    # не считаем: компетенция, которую по ходу курса ничто не проверяет,
+    # обнаружится только на защите — слишком поздно для слушателя.
+    for ci, comp in enumerate(program.competencies):
+        known = [oid for oid in comp.outcome_ids if oid in outcomes]
+        if known and not assessed.intersection(known):
+            report.add(
+                "COMPETENCY_NOT_ASSESSED",
+                Severity.ERROR,
+                f"Компетенцию {comp.id} не проверяет ни один тест или семинар — только итоговая аттестация",
+                path=f"competencies[{ci}]",
+                hint="Добавить вопрос теста или задание семинара на один из её результатов обучения",
             )
 
 
@@ -442,6 +572,7 @@ def check_services(program: Program, report: ValidationReport) -> None:
 CHECKS = (
     check_hours,
     check_coverage,
+    check_links,
     check_sources,
     check_template,
     check_schedule,

@@ -382,7 +382,59 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         ],
     )
     _attach_orphan_outcomes(program)
+    link_competencies(program)
     return program
+
+
+def link_competencies(program: Program) -> int:
+    """Свести карту компетенций в согласованное состояние без модели.
+
+    Модель выдаёт связи с одной стороны (`competency.outcome_ids`) и не
+    всегда полно: компетенция без РО, РО без компетенции, ссылки на РО,
+    которых нет. Каждое такое место — обрыв трассировки «компетенция → РО →
+    оценочное средство». Чиним детерминированно:
+      * ссылки на несуществующие РО убираем;
+      * РО без компетенции отдаём компетенции, у которой РО меньше всех;
+      * компетенции без РО даём РО по кругу из общего списка;
+      * обратную ссылку `outcome.competency_id` ставим по первой компетенции.
+    Возвращает число исправлений — для журнала.
+    """
+    if not program.competencies or not program.outcomes:
+        return 0
+    known = {o.id for o in program.outcomes}
+    fixed = 0
+    for comp in program.competencies:
+        clean = [oid for oid in dict.fromkeys(comp.outcome_ids) if oid in known]
+        fixed += len(comp.outcome_ids) - len(clean)
+        comp.outcome_ids = clean
+
+    owned = {oid for c in program.competencies for oid in c.outcome_ids}
+    for outcome in program.outcomes:
+        if outcome.id in owned:
+            continue
+        target = next(
+            (c for c in program.competencies if c.id == outcome.competency_id),
+            min(program.competencies, key=lambda c: len(c.outcome_ids)),
+        )
+        target.outcome_ids.append(outcome.id)
+        owned.add(outcome.id)
+        fixed += 1
+
+    for index, comp in enumerate(program.competencies):
+        if not comp.outcome_ids:
+            comp.outcome_ids.append(program.outcomes[index % len(program.outcomes)].id)
+            fixed += 1
+
+    first_owner: dict[str, str] = {}
+    for comp in program.competencies:
+        for oid in comp.outcome_ids:
+            first_owner.setdefault(oid, comp.id)
+    for outcome in program.outcomes:
+        owner = first_owner.get(outcome.id)
+        if owner and outcome.competency_id != owner:
+            outcome.competency_id = owner
+            fixed += 1
+    return fixed
 
 
 def _schedule_for(request: ProgramRequest, total: float) -> Schedule:

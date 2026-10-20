@@ -21,7 +21,15 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.config import ConfigError, build_provider, check_config, describe_config, get_settings
+from app.config import (
+    ConfigError,
+    build_provider,
+    check_config,
+    describe_config,
+    extra_hosts,
+    get_settings,
+    host_rule,
+)
 
 # Конфигурацию проверяем до импорта остальных модулей: хранилище сессий и
 # метрики читают настройки при импорте, и ошибка в .env всплыла бы там —
@@ -55,12 +63,13 @@ from app.pipeline.content import (
 from app.pipeline.intake import apply_answers, reask_text, run_intake
 from app.pipeline.references import parse_reference
 from app.pipeline.refresh import content_from_text, find_outdated, program_content
+from app.pipeline.sources_review import pending as sources_pending, review as review_source
 from app.pipeline.skeleton import build_skeleton
 from app.render.docx_acr import render_docx
 from app.render.lms import render_gift, render_tests_csv
 from app.render.pptx_slides import render_pptx
 from app.schemas.ir import Hours, ProgramType as ProgramTypeIn, StudyForm as StudyFormIn
-from app.schemas.ir import Program
+from app.schemas.ir import HOUR_KINDS, HOUR_STEP, Program
 from app.schemas.request import ClarifyingQuestion, ProgramRequest as ClarifyingRequest
 from app.skills import list_skills
 from app.store import Session, Stage, store
@@ -81,6 +90,12 @@ try:
     _base_provider = build_provider()
 except ConfigError as exc:
     _refuse_to_start(exc)
+
+_host_rule = (
+    host_rule(settings.llm_base_url, extra_hosts(settings.llm_extra_hosts))
+    if getattr(_base_provider, "host", None)
+    else None
+)
 
 print("Агент образовательных программ АЦР", file=sys.stderr)
 for _line in describe_config():
@@ -138,6 +153,14 @@ class GenerateIn(BaseModel):
     references: list[str] = []
     test_total: int | None = None
     slides_modules: list[int] | None = None
+
+
+class SourceReviewIn(BaseModel):
+    """Решение методиста по неподтверждённому источнику."""
+
+    kind: str  # prof_standard | legal_act | source
+    key: str  # код профстандарта или id источника
+    action: str  # confirm | remove
 
 
 class AdaptIn(BaseModel):
@@ -294,6 +317,10 @@ async def health() -> dict:
         # Явный признак: на заглушке содержание программ не генерируется,
         # и это должно быть видно снаружи, а не выясняться по текстам.
         "offline_stub": offline,
+        # Куда ходит агент и каким правилом это разрешено — проверить
+        # ограничение хостов можно снаружи, без доступа к .env.
+        "llm_host": getattr(_base_provider, "host", None),
+        "llm_host_rule": _host_rule,
         "note": (
             "офлайн-заглушка: структура и часы настоящие, содержание — болванки"
             if offline
@@ -496,6 +523,24 @@ async def make_skeleton(session_id: str) -> dict:
     return _state(session)
 
 
+def _check_hours_patch(payload: HoursPatchIn) -> None:
+    """Отказать в правке, которая заведомо ломает план, — до того как она
+    тронет программу. Иначе половина правки применилась бы, а вторая упала."""
+    for module_id, value in (payload.module_hours or {}).items():
+        if value <= 0:
+            raise HTTPException(400, f"{module_id}: часы модуля должны быть больше нуля")
+    for topic_id, patch in (payload.topic_hours or {}).items():
+        for kind, value in patch.items():
+            if kind not in HOUR_KINDS:
+                raise HTTPException(
+                    400, f"{topic_id}: «{kind}» — не вид работы (допустимо: {', '.join(HOUR_KINDS)})"
+                )
+            if value < 0:
+                raise HTTPException(400, f"{topic_id}: часы не могут быть отрицательными")
+            if abs(value / HOUR_STEP - round(value / HOUR_STEP)) > 1e-9:
+                raise HTTPException(400, f"{topic_id}: часы задаются с шагом {HOUR_STEP:g} ч")
+
+
 @app.post("/api/sessions/{session_id}/skeleton/hours")
 async def patch_hours(session_id: str, payload: HoursPatchIn) -> dict:
     """Правка часов методистом с пересчётом сумм солвером."""
@@ -503,6 +548,7 @@ async def patch_hours(session_id: str, payload: HoursPatchIn) -> dict:
     if session.program is None:
         raise HTTPException(409, "каркас ещё не собран")
     program = session.program
+    _check_hours_patch(payload)
     if payload.module_hours:
         for module in program.modules:
             new_total = payload.module_hours.get(module.id)
@@ -526,8 +572,7 @@ async def patch_hours(session_id: str, payload: HoursPatchIn) -> dict:
                 if not patch:
                     continue
                 for kind, value in patch.items():
-                    if hasattr(topic.hours, kind):
-                        setattr(topic.hours, kind, float(value))
+                    setattr(topic.hours, kind, float(value))
                 touched = True
             if touched:
                 module.hours = Hours.sum([t.hours for t in module.topics])
@@ -758,6 +803,48 @@ def _exported(
         size=len(payload),
     )
     return Response(payload, media_type=media_type, headers=_disposition(slug, ext))
+
+
+# --------------------------------------------------------------------------- #
+# Проверка источников методистом
+# --------------------------------------------------------------------------- #
+@app.get("/api/sessions/{session_id}/sources/pending")
+async def sources_to_check(session_id: str) -> dict:
+    """Что агент не смог подтвердить сам — и где это проверить."""
+    session = _session_or_404(session_id)
+    if session.program is None:
+        raise HTTPException(409, "программа ещё не собрана")
+    return {"items": sources_pending(session.program)}
+
+
+@app.post("/api/sessions/{session_id}/sources/review")
+async def sources_review(session_id: str, payload: SourceReviewIn) -> dict:
+    """Подтвердить источник после проверки или убрать его из программы.
+
+    После решения автопроверка пересчитывается, и замечание исчезает из
+    отчёта и из приложения к документу.
+    """
+    session = _session_or_404(session_id)
+    if session.program is None:
+        raise HTTPException(409, "программа ещё не собрана")
+    async with store.lock(session_id):
+        try:
+            message = review_source(session.program, payload.kind, payload.key, payload.action)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'")) from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        stage = "full" if session.program.test_questions else "skeleton"
+        session.report = validate_program(session.program, stage=stage)
+        session.log("sources", message)
+        store.save(session)
+        record.action(
+            session_id=session.id, device_id=session.device_id, kind="source_review",
+            source_kind=payload.kind, action=payload.action,
+        )
+    state = _state(session)
+    state["pending_sources"] = sources_pending(session.program)
+    return state
 
 
 # --------------------------------------------------------------------------- #

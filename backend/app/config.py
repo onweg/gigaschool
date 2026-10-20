@@ -54,15 +54,60 @@ def extra_hosts(value: str) -> tuple[str, ...]:
     return tuple(hosts)
 
 
-def host_allowed(url: str, extra: tuple[str, ...] = ()) -> bool:
-    """Хост из списка или его поддомен."""
+#: Хосты, до которых ключ можно отправлять по http: запрос не покидает машину.
+LOCAL_HOSTS = ("localhost", "127.0.0.1")
+
+
+def host_rule(url: str, extra: tuple[str, ...] = ()) -> str | None:
+    """Каким правилом адрес разрешён — или None, если никаким.
+
+    Возвращает не просто да/нет, а источник разрешения: «cloud.ru (список
+    кейса)» или «…(LLM_EXTRA_HOSTS)». Это печатается в журнал запуска и
+    отдаётся в /api/health — по ним видно, на что опирается допуск.
+    """
     host = (urlparse(url).hostname or "").lower()
     if not host:
-        return False
-    return any(
-        host == allowed or host.endswith("." + allowed)
-        for allowed in (*ALLOWED_LLM_HOSTS, *extra)
-    )
+        return None
+    for allowed in ALLOWED_LLM_HOSTS:
+        if host == allowed or host.endswith("." + allowed):
+            return f"{allowed} (список кейса)"
+    for allowed in extra:
+        if host == allowed or host.endswith("." + allowed):
+            return f"{allowed} (LLM_EXTRA_HOSTS)"
+    return None
+
+
+def host_allowed(url: str, extra: tuple[str, ...] = ()) -> bool:
+    """Хост из списка или его поддомен."""
+    return host_rule(url, extra) is not None
+
+
+def check_base_url(url: str, extra: tuple[str, ...] = ()) -> str:
+    """Проверить адрес модели целиком и вернуть правило, которым он разрешён.
+
+    Кроме домена ловим то, что домен не покажет: логин и пароль в адресе
+    (`https://user:pass@…` — секрет уходит в журналы вместе с адресом) и
+    схему, отличную от http(s).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ConfigError(
+            f"адрес модели {url!r}: нужна схема https://, сейчас {parsed.scheme or 'никакой'}"
+        )
+    if parsed.username or parsed.password:
+        raise ConfigError(
+            "в адресе модели есть логин или пароль (user:pass@…). Ключ передаётся "
+            "в OPENAI_API_KEY, а адрес попадает в журналы — уберите их из адреса"
+        )
+    rule = host_rule(url, extra)
+    if rule is None:
+        raise ConfigError(
+            f"адрес модели {url!r} не разрешён. Кейс допускает только "
+            f"модели Cloud.ru: {', '.join(ALLOWED_LLM_HOSTS)}. Если площадка "
+            f"выдала шлюз на другом домене, добавьте именно его: "
+            f"LLM_EXTRA_HOSTS=<домен>."
+        )
+    return rule
 
 
 #: Среда хакатона кладёт доступы к моделям Cloud.ru в OPENAI_*-переменные
@@ -213,13 +258,7 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
                 "(или LLM_BASE_URL) — например, шлюз площадки из /opt/hackathon/ai.env"
             )
         extra = extra_hosts(s.llm_extra_hosts)
-        if not host_allowed(s.llm_base_url, extra):
-            raise ConfigError(
-                f"адрес модели {s.llm_base_url!r} не разрешён. Кейс допускает только "
-                f"модели Cloud.ru: {', '.join(ALLOWED_LLM_HOSTS)}. Если площадка "
-                f"выдала шлюз на другом домене, добавьте именно его: "
-                f"LLM_EXTRA_HOSTS=<домен>."
-            )
+        check_base_url(s.llm_base_url, extra)
         provider = OpenAICompatProvider(
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
@@ -229,6 +268,7 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             name=s.llm_provider or "openai_compat",
             supports_json_mode=s.llm_json_mode,
             max_parallel=s.llm_max_parallel,
+            allowed_hosts=(*ALLOWED_LLM_HOSTS, *extra),
         )
         if s.llm_cache:
             from app.llm.cache import CachedProvider
@@ -294,6 +334,10 @@ def describe_config() -> list[str]:
         f"кэш ответов:    {'включён' if s.llm_cache else 'выключен'}",
         f"данные:         {Path(s.data_dir).resolve()}",
     ]
+    if s.llm_base_url:
+        rule = host_rule(s.llm_base_url, extra_hosts(s.llm_extra_hosts))
+        host = urlparse(s.llm_base_url).hostname or "—"
+        lines.append(f"проверка хоста: {host} — " + (f"разрешён: {rule}" if rule else "НЕ разрешён"))
     if s.llm_extra_hosts:
         lines.append(f"доп. хосты:     {', '.join(extra_hosts(s.llm_extra_hosts))}")
     return lines
@@ -316,6 +360,13 @@ def check_config() -> list[str]:
             f"разрешены хосты вне Cloud.ru: {', '.join(extra_hosts(s.llm_extra_hosts))}. "
             "Для сдачи кейса уберите LLM_EXTRA_HOSTS"
         )
+    if s.llm_base_url:
+        parsed = urlparse(s.llm_base_url)
+        if parsed.scheme == "http" and (parsed.hostname or "") not in LOCAL_HOSTS:
+            warnings.append(
+                f"адрес модели по http:// ({parsed.hostname}) — ключ уходит в сеть "
+                "открытым текстом. Используйте https://"
+            )
     if s.llm_cache:
         warnings.append(
             "LLM_CACHE=1: повторные запросы берутся с диска, генерация не настоящая. "

@@ -79,3 +79,62 @@ async def test_broken_cache_file_does_not_break_generation(tmp_path) -> None:  #
 
     assert inner.calls == 2
     assert result.text
+
+
+# --- Межпроцессная синхронизация (разбор 20 октября) -------------------------
+
+def test_prune_skips_when_other_process_holds_lock(tmp_path) -> None:  # noqa: ANN001
+    """Пока чистит один процесс, второй каталог не трогает."""
+    pytest.importorskip("fcntl")
+    import subprocess
+    import sys
+    import time as _time
+
+    provider = CachedProvider(CountingProvider(), tmp_path, max_files=1)
+    for name in ("a", "b", "c"):
+        (tmp_path / f"{name}.json").write_text("{}")
+
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl,sys,time;"
+            f"h=open({str(tmp_path / '.prune.lock')!r},'a');"
+            "fcntl.flock(h,fcntl.LOCK_EX);print('ok',flush=True);time.sleep(5)",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "ok"
+        assert provider._prune() is False, "блокировка у другого процесса — пропускаем"
+        assert len(list(tmp_path.glob("*.json"))) == 3
+    finally:
+        holder.kill()
+        holder.wait()
+    _time.sleep(0.05)
+    assert provider._prune() is True
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+@pytest.mark.anyio
+async def test_file_removed_by_neighbour_is_a_miss(tmp_path) -> None:  # noqa: ANN001
+    inner = CountingProvider()
+    provider = CachedProvider(inner, tmp_path)
+    await provider.complete(system="s", user="вопрос")
+    for path in tmp_path.glob("*.json"):
+        path.unlink()  # «соседний процесс» почистил каталог
+    await provider.complete(system="s", user="вопрос")
+    assert inner.calls == 2
+
+
+@pytest.mark.anyio
+async def test_write_is_atomic_and_private(tmp_path) -> None:  # noqa: ANN001
+    import stat
+
+    provider = CachedProvider(CountingProvider(), tmp_path)
+    await provider.complete(system="s", user="вопрос")
+    files = list(tmp_path.glob("*.json"))
+    assert len(files) == 1
+    assert not list(tmp_path.glob("*.tmp")), "временные файлы не остаются"
+    assert stat.S_IMODE(files[0].stat().st_mode) == 0o600

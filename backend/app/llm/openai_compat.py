@@ -9,11 +9,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
+from urllib.parse import urlparse
 
 import httpx
 
 from app.llm.base import Completion, LLMError, LLMProvider, Usage
+
+log = logging.getLogger("agent.llm")
 
 #: Коды, после которых есть смысл повторить: перегруз шлюза и лимит запросов.
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
@@ -54,7 +58,18 @@ class OpenAICompatProvider(LLMProvider):
         extra_headers: dict[str, str] | None = None,
         max_parallel: int = 4,
         max_retries: int = 5,
+        allowed_hosts: tuple[str, ...] | None = None,
     ) -> None:
+        # Вторая линия защиты: конфигурация уже проверила адрес, но провайдер
+        # можно создать и в обход неё (скрипт, тест, будущий код). Ключ не
+        # должен уйти на хост вне списка ни при каком пути создания.
+        host = (urlparse(base_url).hostname or "").lower()
+        if allowed_hosts is not None and not any(
+            host == h or host.endswith("." + h) for h in allowed_hosts
+        ):
+            log.warning("адрес модели отклонён: хост %s вне списка разрешённых", host or "—")
+            raise LLMError(f"{name}: хост {host or '—'} не входит в список разрешённых")
+        self.host = host
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -130,7 +145,9 @@ class OpenAICompatProvider(LLMProvider):
             after = None
             async with self._gate:
                 try:
-                    async with httpx.AsyncClient(timeout=timeout) as client:
+                    # Перенаправления не выполняем: ответ 3xx увёл бы запрос
+                    # вместе с ключом на хост, который проверку не проходил.
+                    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                         response = await client.post(
                             f"{self.base_url}/chat/completions", json=payload, headers=headers
                         )
@@ -144,6 +161,16 @@ class OpenAICompatProvider(LLMProvider):
                     last = f"сеть недоступна: {exc.__class__.__name__}"
                     response = None
                 if response is not None:
+                    if 300 <= response.status_code < 400:
+                        target = urlparse(response.headers.get("location", "")).hostname or "—"
+                        log.warning("шлюз %s перенаправляет на %s — переход не выполнен", self.host, target)
+                        raise LLMError(
+                            f"{self.name}: шлюз перенаправляет запрос на {target} "
+                            f"(HTTP {response.status_code}). Переход не выполнен, чтобы ключ "
+                            f"не ушёл на непроверенный адрес: укажите в OPENAI_BASE_URL "
+                            f"конечный адрес",
+                            self.api_key,
+                        )
                     if response.status_code < 400:
                         try:
                             return response.json()

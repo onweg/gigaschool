@@ -17,11 +17,19 @@
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: блокировок через fcntl нет
+    fcntl = None  # type: ignore[assignment]
 
 from app.llm.base import Completion, LLMProvider, Usage
 
@@ -47,13 +55,53 @@ class CachedProvider(LLMProvider):
         self.misses = 0
         self._prune()
 
-    def _prune(self) -> None:
+    @contextlib.contextmanager
+    def _exclusive(self) -> Iterator[bool]:
+        """Блокировка каталога между процессами.
+
+        Кэш общий для всех процессов на машине: сервер под uvicorn с
+        несколькими воркерами, прогон чек-листа рядом. Если двое чистят
+        каталог одновременно, один удаляет файл, который второй сейчас
+        отдаёт. Поэтому очистку делает только тот, кто взял блокировку,
+        остальные её пропускают — чистка не срочная, сделает следующий.
+        """
+        if fcntl is None:
+            yield True
+            return
+        handle = open(self.dir / ".prune.lock", "a")  # noqa: SIM115
+        try:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                yield False  # чистит другой процесс
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+    def _prune(self) -> bool:
         """Удалить просроченное и всё сверх предела, начиная со старого.
 
         Ключей в кэше нет — только хэш запроса в имени и текст ответа внутри.
-        Но и тексты программ хранить вечно незачем.
+        Но и тексты программ хранить вечно незачем. Возвращает False, если
+        очистку пропустили, потому что её уже делает другой процесс.
         """
+        with self._exclusive() as owner:
+            if not owner:
+                return False
+            self._prune_locked()
+            return True
+
+    def _prune_locked(self) -> None:
         now = time.time()
+        # Недописанные временные файлы от упавших процессов.
+        for tmp in self.dir.glob("*.tmp"):
+            with contextlib.suppress(OSError):
+                if now - tmp.stat().st_mtime > 3600:
+                    tmp.unlink()
         files: list[tuple[float, Path]] = []
         for path in self.dir.glob("*.json"):
             try:
@@ -76,6 +124,10 @@ class CachedProvider(LLMProvider):
     def model(self) -> str:  # type: ignore[override]
         return self.inner.model
 
+    @property
+    def host(self) -> str | None:
+        return getattr(self.inner, "host", None)
+
     def _path(self, system: str, user: str, json_mode: bool) -> Path:
         key = hashlib.sha256(
             "\x00".join([self.inner.model, system, user, str(json_mode)]).encode()
@@ -92,17 +144,18 @@ class CachedProvider(LLMProvider):
         json_mode: bool = False,
     ) -> Completion:
         path = self._path(system, user, json_mode)
-        if path.exists() and time.time() - path.stat().st_mtime > self.ttl:
-            path.unlink(missing_ok=True)
-        if path.exists():
-            try:
+        saved = None
+        try:
+            # Между проверкой и чтением файл может удалить чистка соседнего
+            # процесса — это просто промах, а не ошибка.
+            if time.time() - path.stat().st_mtime <= self.ttl:
                 saved = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                saved = None  # битый файл просто перезапишем
-            if saved:
-                self.hits += 1
-                # Токены записи не начисляем: за этот ответ уже заплачено.
-                return Completion(text=saved["text"], usage=Usage(), model=saved.get("model", ""))
+        except (OSError, json.JSONDecodeError):
+            saved = None  # нет файла или битый — перезапишем
+        if saved:
+            self.hits += 1
+            # Токены записи не начисляем: за этот ответ уже заплачено.
+            return Completion(text=saved["text"], usage=Usage(), model=saved.get("model", ""))
 
         self.misses += 1
         result = await self.inner.complete(
@@ -112,15 +165,20 @@ class CachedProvider(LLMProvider):
             max_tokens=max_tokens,
             json_mode=json_mode,
         )
+        self._write(path, {"text": result.text, "model": result.model})
+        return result
+
+    def _write(self, path: Path, data: dict) -> None:
+        """Запись через временный файл и переименование: другой процесс
+        увидит либо старый ответ, либо новый целиком, но не половину."""
         try:
-            path.write_text(
-                json.dumps(
-                    {"text": result.text, "model": result.model},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-            os.chmod(path, 0o600)
+            fd, tmp = tempfile.mkstemp(dir=self.dir, suffix=".tmp")  # создаётся с правами 0o600
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False)
+                os.replace(tmp, path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
         except OSError:
             pass  # не можем записать — не повод ронять генерацию
-        return result

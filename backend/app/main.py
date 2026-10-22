@@ -46,7 +46,7 @@ try:
 except ConfigError as exc:
     _refuse_to_start(exc)
 
-from app.llm.base import redact  # noqa: E402
+from app.llm.base import LLMError, redact  # noqa: E402
 from app.llm.metered import MeteredProvider, current_session  # noqa: E402
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
@@ -192,6 +192,17 @@ class HoursPatchIn(BaseModel):
 def _offline() -> bool:
     """Сервис работает на офлайн-заглушке, а не на модели."""
     return provider.name.startswith("mock")
+
+
+def _model_failure(exc: Exception) -> str:
+    """Отличить «модель не ответила» от «ответила, но разобрать не вышло».
+
+    Раньше любой сбой подписывался «модель недоступна» — даже когда модель
+    ответила, а упал разбор её ответа. Человек ждал минуту и повторял зря.
+    """
+    if isinstance(exc, LLMError):
+        return f"модель недоступна: {_safe(exc)}"
+    return f"не удалось разобрать ответ модели: {_safe(exc)}"
 
 
 def _safe(exc: BaseException) -> str:
@@ -360,7 +371,7 @@ async def create_session(payload: CreateSessionIn, request: Request) -> dict:
             session_id=session.id, device_id=session.device_id,
             kind="intake_failed", error=_safe(exc),
         )
-        raise HTTPException(502, f"модель недоступна: {_safe(exc)}") from exc
+        raise HTTPException(502, _model_failure(exc)) from exc
     session.usage.add(usage)
     session.request = intake.request
     session.questions = intake.questions
@@ -1050,7 +1061,7 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
                 provider, payload.text, references=session.references
             )
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"модель недоступна: {_safe(exc)}") from exc
+            raise HTTPException(502, _model_failure(exc)) from exc
         session.usage.add(usage)
         session.request = intake.request
         session.questions = intake.questions

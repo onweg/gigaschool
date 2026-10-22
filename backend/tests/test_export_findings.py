@@ -12,6 +12,8 @@ import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 
+from conftest import READY
+
 from app.core.validate import validate_program
 from app.llm.mock import MockProvider
 from app.main import app
@@ -91,7 +93,7 @@ def test_json_export_carries_a_summary() -> None:
     body = client.post(
         "/api/generate",
         json={"text": "программа повышения квалификации на 72 часа по анализу данных "
-                      "для банков, очно-заочно, защита проекта"},
+                      "для банков, очно-заочно, защита проекта", "answers": READY},
     ).json()
     assert body["status"] == "ready", body
 
@@ -109,7 +111,8 @@ def test_json_export_carries_a_summary() -> None:
 def test_docx_export_includes_the_appendix() -> None:
     body = client.post(
         "/api/generate",
-        json={"text": "общеразвивающая программа на 16 часов для школьников, очно"},
+        json={"text": "общеразвивающая программа на 16 часов для школьников, очно",
+              "answers": READY},
     ).json()
     assert body["status"] == "ready", body
 

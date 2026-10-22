@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from app.llm.base import LLMProvider, Usage
+from app.llm.base import LLMProvider, Usage, as_number
 from app.schemas.ir import ProgramType, StudyForm
 from app.schemas.request import ClarifyingQuestion, IntakeResult, ProgramRequest
 from app.config import get_settings
@@ -78,6 +78,86 @@ _NO_CONTACT = re.compile(
 def _as_number(token: str) -> int:
     token = token.lower()
     return int(token) if token.isdigit() else _NUM_WORDS.get(token, 1)
+
+
+_WORD = re.compile(r"[a-zа-яё0-9+#]+")
+
+
+def _grounded(value: str, text: str) -> bool:
+    """Есть ли у значения опора в тексте запроса.
+
+    Сверяем по основам слов: «защита проекта» опирается на «защищает
+    проект», «работа в Excel» — на «работают в Excel». А «начальный уровень»
+    в запросе «программа по Питону для студентов» опоры не имеет — это
+    догадка модели, и её надо спросить у методиста.
+    """
+    haystack = text.lower().replace("ё", "е")
+    words = [w for w in _WORD.findall(value.lower().replace("ё", "е")) if len(w) >= 4 or w.isdigit()]
+    if not words:
+        return value.strip().lower() in haystack
+    return any(w[:5] in haystack for w in words)
+
+
+#: Поля, которые модель склонна додумывать, хотя промпт это запрещает.
+#: Живой случай 23 октября: «Программа по Питону на 200 часов для студентов» —
+#: модель сама поставила входной уровень и форму аттестации, и вместо пяти
+#: уточнений агент задал два.
+_GROUNDED_FIELDS = ("audience", "entry_level", "attestation_form")
+
+
+_AUDIENCE = re.compile(
+    r"\bдля\s+([^,.;:!?«»()]+?)(?=\s+(?:без|с|со|которые|кто|на|по|в)\b|[,.;:!?()]|$)",
+    re.IGNORECASE,
+)
+_ENTRY = re.compile(
+    r"(без\s+(?:опыта|навыков|знаний)[^,.;:!?]*"
+    r"|с\s+нуля"
+    r"|(?:которые|кто)\s+(?:сейчас\s+|уже\s+)?(?:работают|владеют|знают|умеют)[^,.;:!?]*)",
+    re.IGNORECASE,
+)
+_ATTESTATION = (
+    (re.compile(r"защи\w*\s+(?:\w+\s+){0,2}?отч[её]т", re.I), "защита отчёта"),
+    (re.compile(r"защи\w*\s+(?:\w+\s+){0,2}?проект", re.I), "защита проекта"),
+    (re.compile(r"зач[её]т\w*\s+по\s+портфолио", re.I), "зачёт по портфолио"),
+    (re.compile(r"\bзач[её]т", re.I), "зачёт"),
+    (re.compile(r"\bэкзамен", re.I), "экзамен"),
+)
+
+
+def fill_from_text(request: ProgramRequest, text: str) -> None:
+    """Аудитория, входной уровень и форма аттестации, названные прямым текстом.
+
+    Подстраховка на случай, когда модель их не вернула: что методист написал
+    сам, переспрашивать не нужно. Чего в тексте нет — останется пустым, и
+    агент спросит. Значение модели, если оно есть, не трогаем.
+    """
+    if not request.audience and (m := _AUDIENCE.search(text)):
+        request.audience = m.group(1).strip()
+    if not request.entry_level and (m := _ENTRY.search(text)):
+        request.entry_level = m.group(1).strip()
+    if not request.attestation_form:
+        for pattern, form in _ATTESTATION:
+            if pattern.search(text):
+                request.attestation_form = form
+                break
+
+
+def drop_ungrounded(request: ProgramRequest, text: str) -> list[str]:
+    """Убрать значения, которых в запросе нет. Возвращает снятые поля."""
+    dropped: list[str] = []
+    for field in _GROUNDED_FIELDS:
+        value = getattr(request, field) or ""
+        if value and not _grounded(value, text):
+            setattr(request, field, "" if field != "attestation_form" else None)
+            dropped.append(field)
+    # Объём: число из ответа модели должно встречаться в тексте. «Примерно
+    # месяц» — не 72 часа, сколько бы модель ни насчитала.
+    if request.total_hours and not re.search(
+        rf"(?<![\d.,]){request.total_hours:g}(?![\d])", text
+    ):
+        request.total_hours = None
+        dropped.append("total_hours")
+    return dropped
 
 
 def parse_schedule_hints(text: str, request: ProgramRequest) -> None:
@@ -158,10 +238,10 @@ async def run_intake(
             request.program_type = ProgramType(pt)
         except ValueError:
             request.program_type = None
-    request.program_type_confidence = float(data.get("program_type_confidence") or 0)
+    request.program_type_confidence = as_number(data.get("program_type_confidence"), 0.0)
     request.direction = data.get("direction") or ""
-    if hours := data.get("total_hours"):
-        request.total_hours = float(hours)
+    if hours := as_number(data.get("total_hours")):
+        request.total_hours = hours
     request.audience = data.get("audience") or ""
     request.entry_level = data.get("entry_level") or ""
     if sf := data.get("study_form"):
@@ -172,16 +252,19 @@ async def run_intake(
     request.uses_dot = bool(data.get("uses_dot", True))
     request.attestation_form = data.get("attestation_form") or None
     request.duration_note = data.get("duration_note") or ""
-    if mhd := data.get("max_hours_per_day"):
-        request.max_hours_per_day = float(mhd)
-    if mps := data.get("min_practice_share"):
-        request.min_practice_share = float(mps)
+    if mhd := as_number(data.get("max_hours_per_day")):
+        request.max_hours_per_day = mhd
+    if mps := as_number(data.get("min_practice_share")):
+        request.min_practice_share = mps / 100 if mps > 1 else mps  # «50» — это проценты
     request.no_contact_hours = bool(data.get("no_contact_hours", False))
     request.constraints = [str(c) for c in data.get("constraints") or []]
     request.must_cover = [
         str(x).strip() for x in data.get("must_cover") or [] if str(x).strip()
     ]
     request.deliverables = [str(d) for d in data.get("deliverables") or []]
+
+    dropped = drop_ungrounded(request, " ".join([request_text, *(references or [])]))
+    fill_from_text(request, request_text)
 
     parse_schedule_hints(request_text, request)
 
@@ -201,6 +284,11 @@ async def run_intake(
     ][:MAX_QUESTIONS]
 
     notes: list[str] = []
+    if dropped:
+        notes.append(
+            "Модель предложила значения, которых нет в запросе ("
+            + ", ".join(dropped) + ") — не беру их, уточняю у методиста."
+        )
     if request.program_type and request.program_type_confidence < 0.6:
         notes.append(
             f"Тип программы определён предположительно как "

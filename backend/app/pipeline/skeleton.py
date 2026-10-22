@@ -18,7 +18,7 @@ from app.core.hours import (
     split_by_kind,
     split_exact,
 )
-from app.llm.base import LLMProvider, Usage
+from app.llm.base import LLMProvider, Usage, as_number
 from app.registry.legal import acts_for, match_prof_standards
 from app.schemas.ir import (
     Competency,
@@ -132,10 +132,10 @@ def _mix_weights(mix: dict, request: ProgramRequest) -> dict[str, float]:
     if request.no_contact_hours:
         return {"lectures": 0.0, "practice": 0.0, "labs": 0.0, "self_study": 1.0}
     weights = {
-        "lectures": float(mix.get("lectures", 1) or 0),
-        "practice": float(mix.get("practice", 1) or 0),
-        "labs": float(mix.get("labs", 0) or 0),
-        "self_study": float(mix.get("self_study", 0) or 0),
+        "lectures": as_number(mix.get("lectures", 1), 0.0),
+        "practice": as_number(mix.get("practice", 1), 0.0),
+        "labs": as_number(mix.get("labs", 0), 0.0),
+        "self_study": as_number(mix.get("self_study", 0), 0.0),
     }
     # В образце общеразвивающей программы АЦР (data/acr/example-dop-obsh)
     # колонки «лабораторные» нет: только лекции, практика и самостоятельная.
@@ -292,7 +292,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
 
     # ----------------------------- часы ---------------------------------- #
     raw_modules = as_dicts(data.get("modules"))
-    module_weights = [float(m.get("weight", 1) or 1) for m in raw_modules]
+    module_weights = [as_number(m.get("weight"), 1.0) or 1.0 for m in raw_modules]
     module_totals = distribute_modules(total, attestation_hours, module_weights, grain)
 
     # «Практики не меньше половины всех часов» методист считает от полного
@@ -323,7 +323,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
             grain=grain,
         )
         raw_topics = as_dicts(raw.get("topics")) or [{"title": raw.get("title", ""), "weight": 1}]
-        topic_weights = [float(t.get("weight", 1) or 1) for t in raw_topics]
+        topic_weights = [as_number(t.get("weight"), 1.0) or 1.0 for t in raw_topics]
         # Часы тем раскладываются по каждому виду работы отдельно — иначе
         # сумма тем по виду не совпадёт со строкой модуля.
         per_kind = {

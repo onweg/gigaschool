@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from app.llm.base import LLMProvider, Usage
+from app.llm.base import LLMProvider, Usage, as_number
 from app.pipeline.skeleton import as_dicts, assemble_program
 from app.schemas.ir import Program, ProgramType, StudyForm
 from app.schemas.request import ProgramRequest
@@ -74,7 +74,7 @@ def build_target_request(source: Program, changes: dict) -> ProgramRequest:
         program_type=changes.get("program_type") or meta.program_type,
         program_type_confidence=1.0,
         direction=meta.direction,
-        total_hours=float(changes.get("total_hours") or meta.total_hours),
+        total_hours=as_number(changes.get("total_hours")) or meta.total_hours,
         audience=str(changes.get("audience") or meta.audience),
         entry_level=str(changes.get("entry_level") or meta.entry_level),
         study_form=changes.get("study_form") or meta.study_form,

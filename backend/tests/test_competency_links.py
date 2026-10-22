@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from conftest import READY
 from fastapi.testclient import TestClient
 
 from app.core.validate import validate_program
@@ -152,7 +153,8 @@ def test_generated_pk_program_has_full_trace() -> None:
     body = client.post(
         "/api/generate",
         json={"text": "программа повышения квалификации на 72 часа по анализу данных на Python "
-                      "для сотрудников банков, очно-заочно, защита проекта"},
+                      "для сотрудников банков, очно-заочно, защита проекта",
+              "answers": READY},
     ).json()
     assert body["status"] == "ready"
     codes = [f["code"] for f in body["report"]["findings"]]

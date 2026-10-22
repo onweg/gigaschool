@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import READY
+
 from app.llm.base import Completion, LLMProvider, Usage
 from app.main import app
 from app.pipeline.refresh import content_from_text, find_outdated, program_content
@@ -128,7 +130,7 @@ def test_content_from_text_is_trimmed() -> None:
 
 
 def test_endpoint_checks_a_built_program() -> None:
-    body = client.post("/api/generate", json={"text": REQUEST}).json()
+    body = client.post("/api/generate", json={"text": REQUEST, "answers": READY}).json()
     assert body["status"] == "ready", body
 
     response = client.post(f"/api/sessions/{body['session_id']}/refresh")

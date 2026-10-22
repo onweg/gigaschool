@@ -10,6 +10,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import READY
+
 from app.core.validate import validate_program
 from app.llm.mock import MockProvider
 from app.main import app
@@ -117,7 +119,7 @@ async def test_nothing_to_adapt_is_refused() -> None:
 
 
 def _ready_session() -> str:
-    body = client.post("/api/generate", json={"text": REQUEST}).json()
+    body = client.post("/api/generate", json={"text": REQUEST, "answers": READY}).json()
     assert body["status"] == "ready", body
     return body["session_id"]
 

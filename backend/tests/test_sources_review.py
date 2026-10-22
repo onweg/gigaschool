@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from conftest import READY
+
 from app.main import app
 
 client = TestClient(app)
@@ -20,7 +22,7 @@ REQUEST = (
 
 
 def _ready() -> tuple[str, list[dict]]:
-    body = client.post("/api/generate", json={"text": REQUEST}).json()
+    body = client.post("/api/generate", json={"text": REQUEST, "answers": READY}).json()
     assert body["status"] == "ready", body
     sid = body["session_id"]
     items = client.get(f"/api/sessions/{sid}/sources/pending").json()["items"]

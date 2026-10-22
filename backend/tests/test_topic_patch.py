@@ -12,6 +12,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import READY
+
 from app.llm.base import Completion, LLMProvider, Usage
 from app.main import app
 
@@ -41,7 +43,7 @@ class SpyProvider(LLMProvider):
 
 
 def _ready_session() -> tuple[str, dict]:
-    body = client.post("/api/generate", json={"text": REQUEST}).json()
+    body = client.post("/api/generate", json={"text": REQUEST, "answers": READY}).json()
     assert body["status"] == "ready", body
     return body["session_id"], body["program"]
 

@@ -101,8 +101,13 @@ async def test_lesson_length_is_not_mistaken_for_volume(lazy: LazyProvider) -> N
 
 
 @pytest.mark.anyio
-async def test_model_answer_wins_over_text_when_present() -> None:
-    """Разбор текста — подстраховка, а не замена: сказанное моделью в приоритете."""
+async def test_model_hours_not_in_text_lose_to_text() -> None:
+    """Объём, которого нет в тексте, — догадка модели: берём число из запроса.
+
+    Раньше здесь было обратное правило («модель в приоритете»), и на запросе
+    «примерно месяц» модель сама назначала 72 часа. Форма обучения от модели
+    по-прежнему принимается.
+    """
 
     class PreciseProvider(LLMProvider):
         name = "precise"
@@ -117,7 +122,7 @@ async def test_model_answer_wins_over_text_when_present() -> None:
 
     intake, _ = await run_intake(PreciseProvider(), REQUESTS[3])
 
-    assert intake.request.total_hours == 144
+    assert intake.request.total_hours == 72
     assert intake.request.study_form is StudyForm.DISTANT
 
 
@@ -150,4 +155,6 @@ async def test_missing_study_form_is_recovered_from_text() -> None:
 
     assert intake.request.study_form is StudyForm.PART_TIME
     assert "study_form" not in [q.field for q in intake.questions]
-    assert intake.request.ready(), "каркас должен собираться без лишних вопросов"
+    # В укороченном тексте запроса формы аттестации нет, а модель её назвала —
+    # это догадка, и агент спрашивает (см. test_intake_grounding.py).
+    assert intake.request.missing_fields() == ["attestation_form"]

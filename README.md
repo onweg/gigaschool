@@ -203,7 +203,7 @@ POST /api/sessions/{id}/sources/review                 подтвердить и
 
 ```bash
 cd backend
-python -m pytest tests -q                   # 312 тестов, заглушки, без сети
+python -m pytest tests -q                   # 335 тестов, заглушки, без сети
 python scripts/run_open_requests.py         # 5 запросов кейса, 92 проверки по чек-листам
 ```
 

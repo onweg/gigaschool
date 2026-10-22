@@ -114,6 +114,41 @@ class LLMProvider(ABC):
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
+#: Как модели пишут «нет значения» строкой вместо JSON-null. Живой случай
+#: на GigaChat: "total_hours": "null" — и float("null") ронял весь разбор.
+_NULL_WORDS = {"null", "none", "nil", "undefined", "n/a", "не указан", "не указано", "не указана", "неизвестно"}
+
+
+def _drop_null_words(value: object) -> object:
+    if isinstance(value, str) and value.strip().lower() in _NULL_WORDS:
+        return None
+    if isinstance(value, dict):
+        return {k: _drop_null_words(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_drop_null_words(v) for v in value]
+    return value
+
+
+_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+def as_number(value: object, default: float | None = None) -> float | None:
+    """Число из ответа модели: 200, "200", "200 часов", "0,8". Иначе default.
+
+    Модель регулярно отдаёт числа строками и с единицами измерения; падать
+    из-за этого на разборе нельзя — значение просто считается неизвестным,
+    и агент спросит его у методиста.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = _NUMBER.search(value)
+        if match:
+            return float(match.group(0).replace(",", "."))
+    return default
+
 
 def extract_json(text: str) -> dict:
     """Достать JSON-объект из ответа модели."""
@@ -143,4 +178,4 @@ def extract_json(text: str) -> dict:
                 raise ValueError(f"битый JSON: {first.msg} (поз. {first.pos})") from None
     if not isinstance(data, dict):
         raise ValueError("ожидался JSON-объект")
-    return data
+    return _drop_null_words(data)  # type: ignore[return-value]

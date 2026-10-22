@@ -180,6 +180,10 @@ class Topic(BaseModel):
     activities: str = ""  # «ПР (9 часов): практикум ...»
     outcome_ids: list[str] = Field(default_factory=list)
     assessment_form: str = ""
+    # Пожелание методиста к теме («усложнить», «примеры из банков»). Хранится
+    # в теме, а не только в запросе на доработку: иначе пожелание, данное до
+    # утверждения каркаса, терялось при сборке комплекта.
+    instruction: str = ""
 
 
 class Module(BaseModel):

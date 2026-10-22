@@ -290,14 +290,19 @@ export function ChatWidget({
                     {blocking.length > 0 ? (
                       <>
                         <div className="act-note">
-                          Автопроверка не пускает дальше. Поправьте часы в учебном
-                          плане и нажмите пересчёт:
+                          Автопроверка не пускает дальше — что исправить:
                         </div>
                         {blocking.slice(0, 3).map((finding, i) => (
                           <div key={i} className="act-err">
-                            {finding.code} · {finding.message}
+                            {finding.message}
+                            {finding.hint ? <div className="act-hint">→ {finding.hint}</div> : null}
                           </div>
                         ))}
+                        {blocking.length > 3 && (
+                          <div className="act-note">
+                            и ещё {blocking.length - 3} — в разделе «Автопроверка»
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div className="act-note">
@@ -380,7 +385,11 @@ export function ChatWidget({
                 rows={2}
                 value={draft}
                 placeholder={
-                  session?.program
+                  // На каркасе содержания ещё нет — пример правки темы
+                  // только путал: «усложнить» сейчас применить не к чему.
+                  session?.program && session.stage === "skeleton"
+                    ? ""
+                    : session?.program
                     ? "например: тема 2.1 — добавить примеры из банков"
                     : session
                     ? "ответьте на уточнения выше или опишите программу заново"

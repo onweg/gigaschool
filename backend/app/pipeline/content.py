@@ -73,6 +73,7 @@ async def fill_topic_content(
 ) -> Usage:
     """Содержание одной темы. `instruction` — пожелание методиста при
     точечной доработке («усложни», «добавь SQL», «меньше теории»)."""
+    instruction = instruction or topic.instruction
     skill = load_skill("topic_content")
     data, usage = await provider.complete_json(
         system=skill.system,
@@ -188,7 +189,9 @@ async def generate_tests(
                 outcomes_block=_outcomes_block(program, topic),
                 count=count,
                 instruction_block=(
-                    f"Пожелание методиста: {instruction}" if instruction else ""
+                    f"Пожелание методиста: {instruction or topic.instruction}"
+                    if instruction or topic.instruction
+                    else ""
                 ),
             ),
             max_tokens=2500,
@@ -324,7 +327,9 @@ async def generate_seminars(
                 outcomes_block=_outcomes_block(program, topic),
                 count=per_topic,
                 instruction_block=(
-                    f"Пожелание методиста: {instruction}" if instruction else ""
+                    f"Пожелание методиста: {instruction or topic.instruction}"
+                    if instruction or topic.instruction
+                    else ""
                 ),
             ),
             max_tokens=2500,

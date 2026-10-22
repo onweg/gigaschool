@@ -370,6 +370,17 @@ export function App() {
       const topic = next.program?.modules
         .flatMap((m) => m.topics)
         .find((t) => t.id === topicId);
+      // До утверждения каркаса содержания ещё нет — пожелание запоминается
+      // и применяется при сборке комплекта.
+      if (next.stage === "skeleton") {
+        say(
+          "bot",
+          `Запомнил пожелание к теме ${topic?.code ?? topicId}` +
+            (topic ? ` «${topic.title}»` : "") +
+            ". Учту его, когда соберу комплект после утверждения каркаса."
+        );
+        return;
+      }
       say(
         "bot",
         topic

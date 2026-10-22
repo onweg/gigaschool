@@ -604,7 +604,13 @@ async def approve_skeleton(session_id: str) -> dict:
     session = _session_or_404(session_id)
     if session.program is None:
         raise HTTPException(409, "каркас ещё не собран")
-    if session.report and session.report.errors:
+    # Утверждается каркас, поэтому и проверяется он по правилам каркаса.
+    # Отчёт мог остаться от проверки полного комплекта (например, после
+    # правки темы), и тогда «нет тестов на РО» блокировало кнопку на этапе,
+    # где тестов ещё и быть не должно.
+    session.report = validate_program(session.program, stage="skeleton")
+    if session.report.errors:
+        store.save(session)
         record.action(
             session_id=session.id, device_id=session.device_id,
             kind="approve_blocked",
@@ -706,6 +712,21 @@ async def regenerate_topic(session_id: str, topic_id: str, payload: TopicPatchIn
     # Методист может заодно переименовать тему: «замени тему 2.3 на SQL-окна».
     if payload.title:
         topic.title = payload.title.strip()
+    if payload.instruction.strip():
+        topic.instruction = payload.instruction.strip()[:500]
+    # До утверждения каркаса содержания ещё нет: тратить запрос к модели
+    # незачем, а тесты одной темы сломали бы проверку покрытия всего каркаса.
+    # Пожелание запоминаем — сборка комплекта учтёт его для этой темы.
+    if session.stage in (Stage.SKELETON, Stage.CLARIFYING, Stage.CREATED):
+        session.report = validate_program(program, stage="skeleton")
+        session.log("patch", f"Пожелание к теме {topic.code} учтём при сборке комплекта")
+        store.save(session)
+        record.action(
+            session_id=session.id, device_id=session.device_id,
+            kind="topic_wish_saved", topic=topic.code,
+            instruction=payload.instruction[:200],
+        )
+        return _state(session)
     async with store.lock(session_id):
         usage = await fill_topic_content(
             provider, program, module, topic, instruction=payload.instruction

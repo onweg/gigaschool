@@ -184,3 +184,66 @@ def test_title_is_left_alone_without_instruction(monkeypatch: pytest.MonkeyPatch
         t for m in body["program"]["modules"] for t in m["topics"] if t["id"] == topic["id"]
     )
     assert after["title"] == original
+
+
+# --- Пожелание до утверждения каркаса (23 октября) ---------------------------
+# Раньше пожелание к теме, данное на этапе каркаса, терялось: сборка
+# комплекта генерировала все темы заново без него, а тесты одной темы
+# ломали проверку покрытия и блокировали «Утвердить каркас».
+
+
+def _skeleton_session() -> tuple[str, dict]:
+    sid = client.post("/api/sessions", json={"text": REQUEST}).json()["id"]
+    client.post(f"/api/sessions/{sid}/answers", json={"answers": READY})
+    state = client.post(f"/api/sessions/{sid}/skeleton").json()
+    assert state["stage"] == "skeleton", state.get("missing")
+    return sid, state["program"]
+
+
+def test_wish_on_skeleton_is_kept_until_kit(monkeypatch: pytest.MonkeyPatch) -> None:
+    sid, program = _skeleton_session()
+    topic = program["modules"][0]["topics"][0]
+
+    spy = SpyProvider()
+    monkeypatch.setattr("app.main.provider", spy)
+    wish = "добавь оконные функции SQL"
+    state = client.post(
+        f"/api/sessions/{sid}/topics/{topic['id']}/regenerate", json={"instruction": wish}
+    ).json()
+
+    assert spy.prompts == [], "до утверждения каркаса к модели не ходим"
+    saved = state["program"]["modules"][0]["topics"][0]
+    assert saved["instruction"] == wish
+    assert state["program"]["test_questions"] == []
+    assert not [f for f in state["report"]["findings"] if f["severity"] == "error"]
+
+    assert client.post(f"/api/sessions/{sid}/approve").status_code == 200
+    client.post(f"/api/sessions/{sid}/content", json={})
+    with_wish = [p for p in spy.prompts if wish in p]
+    assert with_wish, "пожелание должно дойти до сборки комплекта"
+    assert all(topic["title"] in p or topic["code"] in p for p in with_wish)
+
+
+def test_approve_checks_skeleton_by_skeleton_rules() -> None:
+    """Отчёт полного комплекта не должен блокировать утверждение каркаса.
+
+    Живой случай: правка темы на каркасе сгенерировала тесты одной темы, и
+    «РО проверяется менее чем двумя средствами» заперло кнопку «Утвердить».
+    """
+    from app.core.validate import validate_program
+    from app.main import store
+    from app.schemas.ir import TestQuestion
+
+    sid, program = _skeleton_session()
+    session = store.get(sid)
+    topic = session.program.modules[0].topics[0]
+    session.program.test_questions = [
+        TestQuestion(id="Q-1", topic_id=topic.id, outcome_ids=topic.outcome_ids[:1],
+                     stem="?", options=["a", "b"], correct=[0])
+    ]
+    session.report = validate_program(session.program, stage="full")
+    assert session.report.errors, "предпосылка: полный отчёт с ошибками покрытия"
+    store.save(session)
+
+    response = client.post(f"/api/sessions/{sid}/approve")
+    assert response.status_code == 200, response.text

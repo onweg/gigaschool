@@ -70,23 +70,37 @@ export function App() {
 
   // Открытие по прямой ссылке и кнопка «назад» в браузере.
   useEffect(() => {
-    const apply = () => {
+    const apply = (initial: boolean) => {
       const key = window.location.hash.replace(/^#\/?/, "").split("?")[0] as SectionKey;
       if (!key) return;
       // Статистика закрыта токеном. Если адрес остался в браузере с прошлого
       // раза, а токена нет, открывать форму ввода вместо главного экрана
-      // незачем: человек пришёл за программой, а не за телеметрией.
-      if (key === "stats" && !metricsToken.get()) {
+      // незачем: человек пришёл за программой, а не за телеметрией. Но по
+      // нажатию кнопки форму ввода токена показываем — иначе кнопка мертва.
+      if (initial && key === "stats" && !metricsToken.get()) {
         window.location.hash = "";
         setSection("program");
         return;
       }
       setSection(key);
     };
-    apply();
-    window.addEventListener("hashchange", apply);
-    return () => window.removeEventListener("hashchange", apply);
+    apply(true);
+    const onHash = () => apply(false);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  // Сессия живёт на сервере, но страница после перезагрузки начинает с
+  // нуля. Пока есть начатая работа, браузер переспрашивает перед уходом.
+  useEffect(() => {
+    if (!session) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = ""; // старые Safari и Chrome без этого не спрашивают
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [session]);
 
   // Пока идёт генерация содержания, подтягиваем состояние: шаги видно сразу.
   useEffect(() => {
@@ -167,6 +181,32 @@ export function App() {
 
   async function submitRequest(text: string) {
     if (!text.trim()) return;
+    // Программа уже собрана — сообщение в чате это правка, а не новый
+    // запрос. Раньше любое сообщение начинало новую программу, и на просьбу
+    // «исправь» агент заново спрашивал тип и объём.
+    if (session?.program) {
+      setDraft("");
+      const code = text.match(/(\d+)\s*\.\s*(\d+)/);
+      const topic = code
+        ? session.program.modules
+            .flatMap((m) => m.topics)
+            .find((t) => t.code === `${code[1]}.${code[2]}`)
+        : undefined;
+      if (topic) {
+        await regenerate(topic.id, text.trim());
+        return;
+      }
+      say("user", text);
+      say(
+        "bot",
+        code
+          ? `Темы ${code[1]}.${code[2]} в плане нет. Номера тем — в учебном плане слева.`
+          : "Правлю готовую программу по темам: напишите номер темы и что изменить, " +
+            "например «тема 2.1: добавить примеры из банков» — пересоберу только её. " +
+            "Другая аудитория или объём — «Адаптировать», новая программа — кнопка «Новая»."
+      );
+      return;
+    }
     say("user", text);
     setDraft("");
     const next = await guard("create", () =>

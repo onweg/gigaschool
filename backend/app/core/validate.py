@@ -450,14 +450,31 @@ def check_template(program: Program, report: ValidationReport) -> None:
         REQUIRED_PK if program.meta.program_type is ProgramType.DPP_PK else REQUIRED_OBSH
     )
     for path, probe in checks.items():
-        if not probe(program):
+        if probe(program):
+            continue
+        if path == "prof_standards":
+            # Профстандарта под направление может не найтись в реестре, а
+            # выдумывать код нельзя. Приказ № 499 допускает опору на
+            # квалификационные требования, поэтому это предупреждение для
+            # методиста, а не стоп: иначе каркас оставался в тупике без
+            # способа его исправить, а «Убрать» неподтверждённый профстандарт
+            # само создавало блокирующую ошибку.
             report.add(
                 "TEMPLATE_MISSING",
-                Severity.ERROR,
-                f"Обязательный раздел шаблона не заполнен: {path}",
+                Severity.WARNING,
+                "Профстандарт не указан: в реестре агента нет подходящего под направление",
                 path=path,
-                hint="Заполнить обязательный раздел шаблона АЦР",
+                hint="Указать профстандарт вручную по реестру profstandart.rosmintrud.ru "
+                     "или опереться на квалификационные требования (приказ № 499)",
             )
+            continue
+        report.add(
+            "TEMPLATE_MISSING",
+            Severity.ERROR,
+            f"Обязательный раздел шаблона не заполнен: {path}",
+            path=path,
+            hint="Заполнить обязательный раздел шаблона АЦР",
+        )
 
     if program.meta.program_type is ProgramType.DOP_OBSH and program.prof_standards:
         report.add(

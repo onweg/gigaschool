@@ -135,7 +135,6 @@ export function ChatWidget({
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, session?.questions.length, working, open]);
 
-  const trace = (session?.events ?? []).slice(-4).reverse();
   const lastEvent = session?.events?.[session.events.length - 1];
   const step =
     session?.stage === "content"
@@ -361,20 +360,6 @@ export function ChatWidget({
                 </motion.div>
               )}
 
-              {trace.length > 0 && (
-                <div className="trace">
-                  {trace.map((event, i) => (
-                    <motion.div
-                      key={`${event.at}-${i}`}
-                      className="msg sys"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 - i * 0.16 }}
-                    >
-                      <b>{event.stage}</b> · {event.message}
-                    </motion.div>
-                  ))}
-                </div>
-              )}
             </div>
 
             <div className="composer">
@@ -395,8 +380,10 @@ export function ChatWidget({
                 rows={2}
                 value={draft}
                 placeholder={
-                  session
-                    ? "например: усложни тест по теме 2.1"
+                  session?.program
+                    ? "например: тема 2.1 — добавить примеры из банков"
+                    : session
+                    ? "ответьте на уточнения выше или опишите программу заново"
                     : "например: повышение квалификации, 72 часа, анализ данных для банков"
                 }
                 onChange={(event) => onDraft(event.target.value)}

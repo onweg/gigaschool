@@ -382,8 +382,41 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         ],
     )
     _attach_orphan_outcomes(program)
+    _standards_from_generated_text(program)
     link_competencies(program)
     return program
+
+
+def _standards_from_generated_text(program: Program) -> None:
+    """Подобрать профстандарт по тексту каркаса, если запрос его не подсказал.
+
+    Живой случай: «курс по ИТ-направлению на 200 часов» — в запросе нет ни
+    одного слова из реестра, а модель потом пишет цель и результаты про
+    Python. Код по-прежнему берётся только из реестра, просто ищем его по
+    тексту, где направление уже названо явно.
+    """
+    if program.meta.program_type is not ProgramType.DPP_PK or program.prof_standards:
+        return
+    text = " ".join(
+        [
+            program.meta.title,
+            program.meta.direction,
+            program.goal,
+            *program.objectives,
+            *(o.text for o in program.outcomes),
+            *(c.title for c in program.competencies),
+            *(m.title for m in program.modules),
+        ]
+    )
+    standards = match_prof_standards(text)
+    if not standards:
+        return
+    program.prof_standards = standards
+    std = standards[0]
+    for competency in program.competencies:
+        if not competency.prof_standard_code:
+            competency.prof_standard_code = std.code
+            competency.labor_function = std.labor_functions[0] if std.labor_functions else None
 
 
 def link_competencies(program: Program) -> int:

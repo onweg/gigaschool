@@ -361,7 +361,6 @@ tr.total td { font-weight: 700; border-bottom: none; border-top: 1px solid var(-
 .typing { display: inline-flex; gap: 4px; align-items: center; }
 .typing span { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
 
-.trace { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 
 .composer {
   flex: 0 0 auto; border-top: 1px solid var(--line);

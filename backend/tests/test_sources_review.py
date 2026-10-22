@@ -55,7 +55,7 @@ def test_confirm_clears_finding() -> None:
     assert state["pending_sources"] == []
     codes = _codes(state)
     assert "SOURCE_UNVERIFIED" not in codes
-    assert "SOURCES_UNVERIFIED_LIST" not in codes
+    assert "LITERATURE_UNVERIFIED" not in codes
     std = state["program"]["prof_standards"][0]
     assert std["verification"] == "verified"
     assert "методистом" in std["note"]

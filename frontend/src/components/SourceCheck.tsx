@@ -3,6 +3,35 @@ import { useEffect, useState } from "react";
 import { ApiError, api, type PendingSource } from "../lib/api";
 import type { SessionState } from "../lib/types";
 
+function warnings(n: number): string {
+  const tail = n % 10 === 1 && n % 100 !== 11 ? "предупреждение"
+    : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "предупреждения"
+    : "предупреждений";
+  return `${n} ${tail}`;
+}
+
+const GROUPS: {
+  kind: PendingSource["kind"];
+  title: string;
+  note: (n: number) => string;
+}[] = [
+  {
+    kind: "prof_standard",
+    title: "Профстандарты",
+    note: warnings,
+  },
+  {
+    kind: "legal_act",
+    title: "Нормативные акты",
+    note: warnings,
+  },
+  {
+    kind: "source",
+    title: "Список литературы",
+    note: warnings,
+  },
+];
+
 /**
  * Неподтверждённые источники — маршрут для методиста.
  *
@@ -51,51 +80,62 @@ export function SourceCheck({
     );
   }
 
+  // Каждая строка здесь — одно предупреждение автопроверки: счёт совпадает.
+  const groups = GROUPS.map((g) => ({ ...g, items: items.filter((i) => i.kind === g.kind) })).filter(
+    (g) => g.items.length
+  );
+
   return (
     <div className="source-check">
-      <div className="source-check-head">
-        Требует проверки методистом · {items.length}
-      </div>
-      <AnimatePresence initial={false}>
-        {items.map((item) => (
-          <motion.div
-            className="source-item"
-            key={`${item.kind}-${item.key}`}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, height: 0, marginTop: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <div className="source-body">
-              <div className="source-title">{item.title}</div>
-              <div className="source-what">
-                Сверить {item.what_to_check}:{" "}
-                <a href={item.check_url} target="_blank" rel="noreferrer">
-                  открыть реестр ↗
-                </a>
-              </div>
-            </div>
-            <div className="source-actions">
-              <button
-                className="btn ghost"
-                disabled={busy !== null}
-                onClick={() => void decide(item, "remove")}
-                title="Убрать из программы и из документа"
+      <div className="source-check-head">Требует проверки методистом</div>
+      {groups.map((group) => (
+        <div className="source-group" key={group.kind}>
+          <div className="source-group-head">
+            {group.title} · {group.items.length}
+            <span className="source-group-note">{group.note(group.items.length)}</span>
+          </div>
+          <AnimatePresence initial={false}>
+            {group.items.map((item) => (
+              <motion.div
+                className="source-item"
+                key={`${item.kind}-${item.key}`}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                transition={{ duration: 0.25 }}
               >
-                Убрать
-              </button>
-              <button
-                className="btn primary"
-                disabled={busy !== null}
-                onClick={() => void decide(item, "confirm")}
-                title="Я сверил источник — снять пометку"
-              >
-                {busy === item.key ? "…" : "Подтверждаю"}
-              </button>
-            </div>
-          </motion.div>
-        ))}
-      </AnimatePresence>
+                <div className="source-body">
+                  <div className="source-title">{item.title}</div>
+                  <div className="source-what">
+                    Сверить {item.what_to_check}:{" "}
+                    <a href={item.check_url} target="_blank" rel="noreferrer">
+                      открыть реестр ↗
+                    </a>
+                  </div>
+                </div>
+                <div className="source-actions">
+                  <button
+                    className="btn ghost"
+                    disabled={busy !== null}
+                    onClick={() => void decide(item, "remove")}
+                    title="Убрать из программы и из документа"
+                  >
+                    Убрать
+                  </button>
+                  <button
+                    className="btn primary"
+                    disabled={busy !== null}
+                    onClick={() => void decide(item, "confirm")}
+                    title="Я сверил источник — снять пометку"
+                  >
+                    {busy === item.key ? "…" : "Подтверждаю"}
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      ))}
     </div>
   );
 }

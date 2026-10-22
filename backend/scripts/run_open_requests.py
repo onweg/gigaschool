@@ -316,7 +316,7 @@ def sources_marked() -> Check:
         ]
         codes = {f.code for f in validate_program(p).findings}
         ok = not unverified or bool(
-            {"SOURCE_UNVERIFIED", "SOURCES_UNVERIFIED_LIST"} & codes
+            {"SOURCE_UNVERIFIED", "LITERATURE_UNVERIFIED"} & codes
         )
         return ok, (
             f"неподтверждённых источников {len(unverified)}, "

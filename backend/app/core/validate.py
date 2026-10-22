@@ -405,16 +405,20 @@ def check_sources(program: Program, report: ValidationReport) -> None:
                 path="legal_acts",
                 hint="Сверить реквизиты акта с publication.pravo.gov.ru и снять пометку",
             )
-    unverified = [s for s in program.sources if s.verification is not VerificationStatus.VERIFIED]
-    if unverified:
+    # По предупреждению на каждый источник, как у профстандартов и актов:
+    # раньше было одно общее на весь список, и в блоке «Требует проверки»
+    # строк оказывалось больше, чем предупреждений в отчёте.
+    for si, source in enumerate(program.sources):
+        if source.verification is VerificationStatus.VERIFIED:
+            continue
         report.add(
-            "SOURCES_UNVERIFIED_LIST",
+            "LITERATURE_UNVERIFIED",
             Severity.WARNING,
-            f"{len(unverified)} из {len(program.sources)} источников требуют "
-            "проверки методистом (помечены в документе)",
-            path="sources",
-            hint="Проверить выходные данные и актуальность редакции; "
-                 "непроверенные пометки снять после сверки",
+            f"Источник «{source.citation[:80]}» требует проверки методистом "
+            "(помечен в документе)",
+            path=f"sources[{si}]",
+            hint="Сверить выходные данные и актуальность редакции в «Требует проверки "
+                 "методистом» и подтвердить или убрать источник",
         )
 
 

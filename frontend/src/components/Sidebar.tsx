@@ -77,7 +77,6 @@ export function Sidebar({
         <div className="logo">
           АЦР<sup>®</sup>
         </div>
-        {issues > 0 && <span className="badge">{issues}</span>}
       </div>
 
       <nav className="nav">

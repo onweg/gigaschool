@@ -340,7 +340,7 @@ export function ChatWidget({
                     </div>
                     <div className="exports">
                       {exports.map((item) => (
-                        <a key={item.kind} href={exportUrl(item.kind)}>
+                        <a key={item.kind} href={exportUrl(item.kind)} download>
                           {item.label}
                           <span className="ext">.{item.ext}</span>
                         </a>

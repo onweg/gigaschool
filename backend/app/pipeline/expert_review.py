@@ -151,6 +151,7 @@ def review_view(session: Session) -> dict:
     reviewed = sum(i["status"] == "reviewed" for i in items)
     groups = list(dict.fromkeys(i["topic_id"] for i in items))
     return {"revision": revision, "items": items, "proposals": proposals,
+            "decision_history": [d.model_dump() for d in review.decision_history],
             "approval": approval, "approvals": [a.model_dump() for a in review.approvals],
             "scans": {key: {**scan.model_dump(), "stale": scan.revision != digest([i["revision"] for i in items if i["topic_id"] == key])}
                       for key, scan in review.scans.items() if key in groups},
@@ -198,3 +199,16 @@ async def suggest(provider: LLMProvider, program: Program, item: dict, instructi
         context=json.dumps(topic.model_dump(mode="json") if topic else {}, ensure_ascii=False),
         material=json.dumps(item["value"], ensure_ascii=False), instruction=instruction), max_tokens=6000)
     return editable_value(item, data.get("replacement", {})), usage
+
+
+async def explain_material(provider: LLMProvider, program: Program, item: dict, question: str):
+    skill = load_skill("expert_answer")
+    topic = program.topic_by_id(item["topic_id"])
+    data, usage = await provider.complete_json(system=skill.system, user=skill.render_user(
+        title=program.meta.title,
+        context=json.dumps(topic.model_dump(mode="json") if topic else {}, ensure_ascii=False),
+        material=json.dumps(item["value"], ensure_ascii=False), question=question), max_tokens=2500)
+    answer = data.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("агент не вернул объяснение")
+    return answer.strip(), usage

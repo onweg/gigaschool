@@ -242,10 +242,15 @@ export const api = {
   scanReview: (id: string, topic_id: string) => call<ReviewData>(`/sessions/${id}/review/scan`, {
     method: "POST", body: JSON.stringify({ topic_id }),
   }),
+  reviewBatch: (id: string, items: { item_id: string; revision: string }[], author: string) =>
+    call<ReviewData>(`/sessions/${id}/review/decisions/batch`, { method: "POST", body: JSON.stringify({ items, author }) }),
+  approvalRecordUrl: (id: string) => `${BASE}/sessions/${id}/review/approval-record.docx`,
   reviewDecision: (id: string, data: { item_id: string; revision: string; status: string; author: string; comment: string }) =>
     call<ReviewData>(`/sessions/${id}/review/decisions`, { method: "POST", body: JSON.stringify(data) }),
   dismissFinding: (id: string, finding: string, revision: string) =>
     call<ReviewData>(`/sessions/${id}/review/findings/${finding}/dismiss`, { method: "POST", body: JSON.stringify({ revision }) }),
+  askReview: (id: string, data: { item_id: string; revision: string; instruction: string }) =>
+    call<{ answer: string }>(`/sessions/${id}/review/ask`, { method: "POST", body: JSON.stringify(data) }),
   suggestEdit: (id: string, data: { item_id: string; revision: string; instruction: string }) =>
     call<{ replacement: MaterialValue; offline: boolean }>(`/sessions/${id}/review/suggest`, { method: "POST", body: JSON.stringify(data) }),
   proposeEdit: (id: string, data: { item_id: string; revision: string; after: MaterialValue; author: string; comment: string }) =>

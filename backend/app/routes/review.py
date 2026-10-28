@@ -2,14 +2,15 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.validate import validate_program
 from app.llm.metered import current_session
 from app.pipeline.expert_review import (
-    analyze, apply_edit, digest, editable_value, material_items, program_revision, review_view, suggest,
+    analyze, apply_edit, digest, editable_value, explain_material, material_items, program_revision, review_view, suggest,
 )
-from app.schemas.review import ApprovalDecision, EditProposal, ReviewDecision, ReviewScan
+from app.schemas.review import ApprovalDecision, EditProposal, ReviewDecision, ReviewDecisionRecord, ReviewScan
 from app.store import Stage, store
 
 
@@ -29,6 +30,15 @@ class ProposalIn(VersionIn):
     after: dict[str, Any]
     author: str = Field(min_length=1, max_length=120)
     comment: str = Field(default="", max_length=5000)
+
+
+class BatchItemIn(VersionIn):
+    item_id: str
+
+
+class BatchDecisionIn(BaseModel):
+    items: list[BatchItemIn] = Field(min_length=1, max_length=2000)
+    author: str = Field(min_length=1, max_length=120)
 
 
 class SuggestIn(VersionIn):
@@ -75,6 +85,12 @@ def review_router(provider, get_session, state, safe):
         except (ValueError, ValidationError) as exc:
             raise HTTPException(422, f"проверьте текст, варианты и ключи ответа: {exc}") from None
 
+    def save_decision(s, item_id, decision):
+        previous = s.review.decisions.get(item_id)
+        if previous:
+            s.review.decision_history.append(ReviewDecisionRecord(item_id=item_id, **previous.model_dump()))
+        s.review.decisions[item_id] = decision
+
     @router.get("")
     async def get_review(session_id: str):
         return review_view(available(session_id))
@@ -87,8 +103,32 @@ def review_router(provider, get_session, state, safe):
         if payload.status == "needs_changes" and not payload.comment.strip():
             raise HTTPException(422, "добавьте замечание для методиста")
         item_for(s, payload.item_id, payload.revision)
-        s.review.decisions[payload.item_id] = ReviewDecision(**payload.model_dump(exclude={"item_id"}))
+        save_decision(s, payload.item_id, ReviewDecision(**payload.model_dump(exclude={"item_id"})))
         s.log("review", f"{payload.author}: {payload.item_id} — {payload.status}")
+        store.save(s)
+        return review_view(s)
+
+    @router.post("/decisions/batch")
+    async def batch_decision(session_id: str, payload: BatchDecisionIn):
+        s = available(session_id, True)
+        if not payload.author.strip():
+            raise HTTPException(422, "укажите имя эксперта")
+        ids = [i.item_id for i in payload.items]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(422, "список содержит повторяющиеся материалы")
+        # Проверяем весь набор до первой записи: либо согласовано всё выбранное,
+        # либо ни один статус не изменён. Скрытые/новые материалы не добавляем.
+        current = {i["id"]: i for i in material_items(s.program)}
+        for item in payload.items:
+            if item.item_id not in current or current[item.item_id]["revision"] != item.revision:
+                raise HTTPException(409, "материалы изменились; обновите список и повторите согласование")
+        for item in payload.items:
+            previous = s.review.decisions.get(item.item_id)
+            if previous and previous.status == "reviewed" and previous.revision == item.revision:
+                continue
+            save_decision(s, item.item_id, ReviewDecision(revision=item.revision, status="reviewed",
+                author=payload.author.strip(), method="batch"))
+        s.log("review", f"{payload.author.strip()}: согласовано пакетом материалов — {len(ids)}")
         store.save(s)
         return review_view(s)
 
@@ -147,6 +187,21 @@ def review_router(provider, get_session, state, safe):
         item_for(s, payload.item_id, payload.revision)
         return {"replacement": replacement, "offline": provider.name.startswith("mock")}
 
+    @router.post("/ask")
+    async def ask(session_id: str, payload: SuggestIn):
+        s = available(session_id, True)
+        item = item_for(s, payload.item_id, payload.revision)
+        current_session.set(s.id)
+        try:
+            answer, usage = await explain_material(provider, s.program.model_copy(deep=True), item, payload.instruction)
+        except Exception as exc:
+            raise HTTPException(502, f"не удалось получить объяснение: {safe(exc)}") from exc
+        s.usage.add(usage)
+        store.save(s)
+        s = available(session_id, True)
+        item_for(s, payload.item_id, payload.revision)
+        return {"answer": answer}
+
     @router.post("/proposals")
     async def proposal(session_id: str, payload: ProposalIn):
         s = available(session_id, True)
@@ -160,8 +215,8 @@ def review_router(provider, get_session, state, safe):
             raise HTTPException(409, "это предложение уже отправлено методисту")
         s.review.proposals.append(EditProposal(item_id=item["id"], title=item["title"], revision=item["revision"],
             before=item["value"], after=after, author=payload.author.strip(), comment=payload.comment))
-        s.review.decisions[item["id"]] = ReviewDecision(revision=item["revision"], status="needs_changes",
-            author=payload.author.strip(), comment=payload.comment or "Предложена правка материала")
+        save_decision(s, item["id"], ReviewDecision(revision=item["revision"], status="needs_changes",
+            author=payload.author.strip(), comment=payload.comment or "Предложена правка материала"))
         s.log("review", f"{payload.author}: предложена правка «{item['title'][:100]}»")
         store.save(s)
         return review_view(s)
@@ -203,9 +258,21 @@ def review_router(provider, get_session, state, safe):
             s.report = validate_program(s.program)
             if s.report.errors:
                 raise HTTPException(409, "исправьте ошибки автопроверки перед согласованием")
-        s.review.approvals.append(ApprovalDecision(**payload.model_dump()))
+        s.review.approvals.append(ApprovalDecision(**payload.model_dump(),
+            program_title=s.program.meta.title, review_summary=review_view(s)["summary"]))
         s.log("approval", f"{payload.author}: {payload.decision}. {payload.comment}")
         store.save(s)
         return review_view(s)
+
+    @router.get("/approval-record.docx")
+    async def approval_record(session_id: str):
+        from app.render.approval_record import render_approval_record
+        s = available(session_id)
+        if not s.review.approvals:
+            raise HTTPException(409, "решение руководителя ещё не сохранено")
+        decision = s.review.approvals[-1]
+        return Response(render_approval_record(s.id, decision, program_revision(s.program)),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": 'attachment; filename="approval-record.docx"'})
 
     return router

@@ -217,3 +217,83 @@ def test_analysis_does_not_attach_findings_to_changed_material(ready, monkeypatc
     r = client.post(base + '/scan', json={'topic_id':item['topic_id']})
     assert r.status_code == 409
     assert not view(base)['scans']
+
+
+def test_batch_approves_only_selected_without_changing_content(ready):
+    sid, base = ready
+    before = view(base)
+    selected = before['items'][:3]
+    r = client.post(base + '/decisions/batch', json={'author':'Эксперт', 'items':[
+        {'item_id':i['id'], 'revision':i['revision']} for i in selected]})
+    assert r.status_code == 200, r.text
+    assert r.json()['summary']['reviewed'] == 3
+    assert all(i['decision']['method'] == 'batch' for i in r.json()['items'][:3])
+    assert all(i['status'] == 'todo' for i in r.json()['items'][3:])
+    assert r.json()['revision'] == before['revision']
+    assert client.get(f'/api/sessions/{sid}/export/docx').status_code == 200
+
+
+def test_batch_is_atomic_if_one_revision_changed(ready):
+    sid, base = ready
+    items = view(base)['items'][:3]
+    payload = [{'item_id':i['id'], 'revision':i['revision']} for i in items]
+    payload[-1]['revision'] = 'old'
+    r = client.post(base + '/decisions/batch', json={'author':'Эксперт','items':payload})
+    assert r.status_code == 409
+    assert view(base)['summary']['reviewed'] == 0
+    assert not store.get(sid).review.decision_history
+
+
+@pytest.mark.parametrize('items,author', [([], 'Эксперт'), ([{'item_id':'missing','revision':'old'}], ' '),
+    ([{'item_id':'same','revision':'old'}, {'item_id':'same','revision':'old'}], 'Эксперт')])
+def test_batch_rejects_empty_duplicate_or_unnamed_selection(ready, items, author):
+    _, base = ready
+    assert client.post(base + '/decisions/batch', json={'items':items, 'author':author}).status_code == 422
+
+
+def test_batch_keeps_individual_decisions_proposals_and_comment_history(ready):
+    _, base = ready
+    items = view(base)['items']
+    first = items[0]
+    client.post(base + '/decisions', json={'item_id':first['id'], 'revision':first['revision'], 'author':'Первый эксперт', 'status':'reviewed'})
+    p = proposal(base, items[1])
+    r = client.post(base + '/decisions/batch', json={'author':'Второй эксперт','items':[
+        {'item_id':i['id'],'revision':i['revision']} for i in items]})
+    assert r.status_code == 200
+    d = r.json()
+    assert d['summary']['reviewed'] == len(items)
+    assert d['items'][0]['decision']['method'] == 'individual'
+    assert d['items'][0]['decision']['author'] == 'Первый эксперт'
+    assert d['proposals'][0]['id'] == p['id'] and d['proposals'][0]['status'] == 'pending'
+    assert any(h['comment'] == 'Уточнить формулировку' for h in d['decision_history'])
+
+
+def test_approval_record_preserves_decision_snapshot_and_marks_later_changes(ready):
+    sid, base = ready
+    assert client.get(base + '/approval-record.docx').status_code == 409
+    d = view(base)
+    title = store.get(sid).program.meta.title
+    r = client.post(base + '/approval', json={'revision':d['revision'],'author':'Руководитель','decision':'approved','comment':'К запуску готово'})
+    assert r.status_code == 200
+    store.get(sid).program.meta.title = 'Изменённое название после согласования'
+    r = client.get(base + '/approval-record.docx')
+    assert r.status_code == 200
+    doc = Document(io.BytesIO(r.content))
+    text = '\n'.join(p.text for p in doc.paragraphs) + '\n'.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
+    for value in [title, d['revision'], 'Руководитель', 'К запуску готово', 'Программа изменена после решения', 'Электронная подпись отсутствует']:
+        assert value in text
+    assert 'Изменённое название после согласования' not in text
+    assert 'Согласовано материалов: 0' in text
+
+
+def test_question_to_agent_never_changes_program_or_approves_material(ready):
+    _, base = ready
+    d = view(base)
+    item = d['items'][1]
+    r = client.post(base + '/ask', json={'item_id':item['id'], 'revision':item['revision'], 'instruction':'Почему верен первый вариант?'})
+    assert r.status_code == 200, r.text
+    assert 'Офлайн-режим' in r.json()['answer']
+    after = view(base)
+    assert after['revision'] == d['revision']
+    assert after['summary']['reviewed'] == 0
+    assert after['proposals'] == []

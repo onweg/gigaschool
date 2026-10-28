@@ -2,7 +2,7 @@ export type MaterialValue = Record<string, string | string[] | number[] | { titl
 export type ReviewItem = {
   id: string; kind: string; label: string; title: string; topic_id: string; topic_label: string;
   revision: string; value: MaterialValue; status: 'todo' | 'reviewed' | 'deferred' | 'needs_changes' | 'stale';
-  decision: { author: string; comment: string; at: string } | null;
+  decision: { author: string; comment: string; at: string; method?: "individual" | "batch" } | null;
   findings: { id: string; title: string; reason: string; quote: string; suggestion: string; dismissed: boolean }[];
 };
 export type Proposal = {
@@ -12,6 +12,7 @@ export type Proposal = {
 export type Approval = { decision: 'approved' | 'returned'; author: string; comment: string; at: string; stale?: boolean };
 export type ReviewData = {
   revision: string; items: ReviewItem[]; proposals: Proposal[]; approval: Approval | null; approvals: Approval[];
+  decision_history?: { item_id: string; author: string; comment: string; at: string; status: string; method: string }[];
   scans: Record<string, { revision: string; at: string; stale: boolean; offline: boolean }>;
   summary: { total: number; reviewed: number; pending: number; needs_changes: number; stale: number };
 };

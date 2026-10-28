@@ -16,6 +16,11 @@ class ReviewDecision(BaseModel):
     author: str
     comment: str = ""
     at: str = Field(default_factory=now)
+    method: Literal["individual", "batch"] = "individual"
+
+
+class ReviewDecisionRecord(ReviewDecision):
+    item_id: str
 
 
 class ReviewFinding(BaseModel):
@@ -55,10 +60,13 @@ class ApprovalDecision(BaseModel):
     author: str
     comment: str = ""
     at: str = Field(default_factory=now)
+    program_title: str = ""
+    review_summary: dict[str, int] = Field(default_factory=dict)
 
 
 class ReviewState(BaseModel):
     decisions: dict[str, ReviewDecision] = Field(default_factory=dict)
+    decision_history: list[ReviewDecisionRecord] = Field(default_factory=list)
     findings: list[ReviewFinding] = Field(default_factory=list)
     scans: dict[str, ReviewScan] = Field(default_factory=dict)
     proposals: list[EditProposal] = Field(default_factory=list)

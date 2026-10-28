@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { Program, SessionState } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -46,6 +46,15 @@ export function Sidebar({
   onReset: () => void;
   working: boolean;
 }) {
+  const menu = useRef<HTMLDialogElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 761px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => { if (event.matches) menu.current?.close(); };
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
   const kitCount =
     (program?.test_questions.length ?? 0) +
     (program?.seminar_tasks.length ?? 0) +
@@ -81,7 +90,18 @@ export function Sidebar({
         <div className="brand-caption">Академия<br />цифрового развития</div>
       </div>
 
-      <button className="new-program" disabled={working} onClick={onReset}><Icon name="plus" size={18} />Новая программа</button>
+      <button className="new-program" aria-label="Новая программа" disabled={working} onClick={onReset}><Icon name="plus" size={18} /><span>Новая программа</span></button>
+      <button ref={menuButton} className="mobile-menu-toggle" aria-label="Открыть разделы" aria-controls="mobile-sections" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true); }}><Icon name="menu" size={22} /></button>
+      <dialog ref={menu} id="mobile-sections" className="mobile-menu-dialog" aria-labelledby="mobile-sections-title" onClose={() => { setMenuOpen(false); if (window.matchMedia("(max-width: 760px)").matches) menuButton.current?.focus(); }} onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientY < bounds.top || event.clientY > bounds.bottom || event.clientX < bounds.left || event.clientX > bounds.right) menu.current?.close();
+      }}>
+        <header><div><span>Рабочее пространство</span><h2 id="mobile-sections-title">Ваша программа</h2></div><button autoFocus aria-label="Закрыть разделы" onClick={() => menu.current?.close()}><Icon name="close" /></button></header>
+        <nav aria-label="Разделы программы">
+          {(Object.keys(LABELS) as SectionKey[]).map(key => <button key={key} className={`mobile-section ${active === key ? "active" : ""}`} aria-current={active === key ? "page" : undefined} disabled={!ready[key]} onClick={() => { onSelect(key); menu.current?.close(); }}><Icon name={key} /><span>{LABELS[key]}</span>{counts[key] && <small>{counts[key]}</small>}{active === key && <Icon name="check" size={18} />}</button>)}
+        </nav>
+      </dialog>
       <div className="nav-caption">Рабочее пространство</div>
       <nav className="nav" aria-label="Основная навигация">
         {(Object.keys(LABELS) as SectionKey[]).map((key) => (

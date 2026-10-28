@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 
 const paths = {
+  menu: "M4 7h16M4 12h16M4 17h16",
   expert: "M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm5-2 6 6M7 10l2 2 4-4",
   review: "M4 3h12v18H4V3Zm4 5h4m-4 4h4m-4 4h3m7-9 3 3-6 6h-3v-3l6-6Z",
   approval: "M5 3h14v18H5V3Zm3 5h8m-8 4h5m-5 4 2 2 5-5",

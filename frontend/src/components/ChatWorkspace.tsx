@@ -153,7 +153,7 @@ export function ChatWorkspace({
         {STEPS.map((step, i) => {
           const active = step.key.includes(session?.stage ?? "created");
           const done = position > ORDER.indexOf(step.key[step.key.length - 1]) || (session?.stage === "ready" && i === 3);
-          return <div key={step.label} className={`workspace-step ${active ? "active" : ""} ${done ? "done" : ""}`} aria-current={active ? "step" : undefined}>
+          return <div key={step.label} className={`workspace-step ${active ? "active" : ""} ${done ? "done" : ""}`} aria-label={step.label} aria-current={active ? "step" : undefined}>
             <span className="step-number">{done ? <Icon name="check" size={13} /> : String(i + 1).padStart(2, "0")}</span>
             <span>{step.label}</span>{i < STEPS.length - 1 && <span className="step-connector" />}
           </div>;
@@ -168,7 +168,7 @@ export function ChatWorkspace({
           {welcome ? (
             <div className="welcome">
               <div className="welcome-mark"><Icon name="spark" size={34} /></div>
-              <h1>Создайте образовательную<br />программу <span>с помощью ИИ</span></h1>
+              <h1>Создайте образовательную<br />{" "}программу <span>с помощью ИИ</span></h1>
               <div className="welcome-features">
                 <span><Icon name="program" size={15} />Шаблоны АЦР</span>
                 <span><Icon name="report" size={15} />Проверка часов и компетенций</span>

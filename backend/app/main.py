@@ -20,14 +20,13 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import (
     ConfigError,
     build_provider,
     check_config,
     describe_config,
-    extra_hosts,
     get_settings,
     host_rule,
 )
@@ -49,6 +48,7 @@ except ConfigError as exc:
 
 from app.llm.base import LLMError, redact  # noqa: E402
 from app.llm.models import ModelRouter, selected_model
+from app.llm.catalog import YANDEX_HOST
 from app.llm.metered import MeteredProvider, current_session  # noqa: E402
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
@@ -94,7 +94,7 @@ except ConfigError as exc:
     _refuse_to_start(exc)
 
 _host_rule = (
-    host_rule(settings.llm_base_url, extra_hosts(settings.llm_extra_hosts))
+    host_rule(settings.llm_base_url, (YANDEX_HOST,) if settings.llm_profile == "yandex_dev" else ())
     if getattr(_base_provider, "host", None)
     else None
 )
@@ -112,7 +112,7 @@ if _base_provider.name.startswith("mock"):
 print("", file=sys.stderr)
 
 #: Метрики снимаются обёрткой вокруг провайдера: пайплайн о них не знает.
-model_router = ModelRouter(_base_provider)
+model_router = ModelRouter(_base_provider, profile=settings.llm_profile, configured_model=settings.llm_model)
 provider = MeteredProvider(model_router)
 _model_jobs: dict[str, int] = {}
 
@@ -162,6 +162,7 @@ MAX_REFERENCE_BYTES = settings.max_reference_mb * 1024 * 1024
 # Модели запросов
 # --------------------------------------------------------------------------- #
 class CreateSessionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model_id: str | None = None
     text: str
     references: list[str] = []
@@ -184,6 +185,7 @@ class GenerateIn(BaseModel):
     дослать ответы на уточняющие вопросы и довести ту же сессию до комплекта.
     """
 
+    model_config = ConfigDict(extra="forbid")
     text: str = ""
     session_id: str | None = None
     model_id: str | None = None
@@ -366,6 +368,7 @@ async def health() -> dict:
     offline = provider.name.startswith("mock")
     return {
         "status": "ok",
+        "llm_profile": model_router.profile,
         "llm_provider": provider.name,
         "llm_model": provider.model or "—",
         # Явный признак: на заглушке содержание программ не генерируется,
@@ -386,10 +389,12 @@ async def health() -> dict:
 @app.get("/api/models")
 async def model_catalog() -> dict:
     return {"models": list(model_router.options.values()), "default_id": model_router.default,
-            "offline_stub": model_router.offline}
+            "offline_stub": model_router.offline, "profile": model_router.profile,
+            "selection_enabled": len(model_router.options) > 1}
 
 
 class ModelChoiceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model_id: str
 
 

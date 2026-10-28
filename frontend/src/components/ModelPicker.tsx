@@ -25,6 +25,9 @@ export function ModelPicker({ catalog, value, disabled, onChange, loadError, onR
     try { await onChange(id); setOpen(false); trigger.current?.focus(); }
     catch (e) { setError((e as Error).message); setOpen(true); }
   }
+  if (catalog?.models.length === 1 && !loadError) {
+    return <div className="model-picker"><span className="model-picker-fixed" title="Модель настроена на сервере">{catalog.models[0].name}</span></div>;
+  }
   return <div className="model-picker" ref={root} onKeyDown={e => {
     if (e.key === "Escape") { setOpen(false); trigger.current?.focus(); }
     if (open && ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
@@ -35,9 +38,9 @@ export function ModelPicker({ catalog, value, disabled, onChange, loadError, onR
       buttons[next]?.focus();
     }
   }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false); }}>
-    <button ref={trigger} className="model-picker-trigger" aria-label={`Выбрать модель. ${model?.name ?? "Модель сервера"}`} aria-expanded={open} aria-haspopup="listbox" aria-controls={menuId}
-      disabled={disabled} onClick={() => setOpen(!open)} title={disabled ? "Дождитесь завершения текущей операции" : value}>
-      <Icon name="spark" size={16} /><span>{model?.name ?? (loadError ? "Модель сервера" : "Загрузка моделей…")}</span><Icon name="chevron" size={13} />
+    <button ref={trigger} className="model-picker-trigger" aria-label={`Выбрать модель. ${model?.name ?? "Выбор модели"}`} aria-expanded={open} aria-haspopup="listbox" aria-controls={menuId}
+      disabled={disabled} onClick={() => { setError(""); setOpen(!open); }} title={disabled ? "Дождитесь завершения текущей операции" : value}>
+      <Icon name="spark" size={16} /><span>{model?.name ?? (loadError ? "Выбор модели" : "Загрузка моделей…")}</span><Icon name="chevron" size={13} />
     </button>
     {open && <div className="model-picker-popover">
       <div className="model-picker-caption">Модель для работы над программой</div>

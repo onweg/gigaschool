@@ -4,6 +4,7 @@ services:
     environment:
       # Пусто — провайдер выбирается сам: есть ключ и модель → живая модель,
       # иначе офлайн-заглушка. mock — принудительно без обращения к модели.
+      LLM_PROFILE: ${LLM_PROFILE:-hackathon}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}

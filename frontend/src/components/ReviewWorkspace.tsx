@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../lib/api";
 import type { MaterialValue, ReviewData, ReviewItem } from "../lib/review";
 import type { SessionState } from "../lib/types";
@@ -44,7 +44,8 @@ function Editor({ value, onChange, disabled }: { value: MaterialValue; onChange:
   </fieldset>;
 }
 
-export function ReviewWorkspace({ session, active, mode, onSession, onNavigate, working, onWorkingChange }: {
+export function ReviewWorkspace({ session, active, mode, onSession, onNavigate, working, onWorkingChange, modelPicker }: {
+  modelPicker: ReactNode;
   onWorkingChange: (working: boolean) => void;
   active: boolean; session: SessionState | null; mode: "expert" | "review" | "approval";
   onSession: (s: SessionState) => void; onNavigate: (s: SectionKey) => void; working: boolean;
@@ -225,6 +226,7 @@ export function ReviewWorkspace({ session, active, mode, onSession, onNavigate, 
             <p className="review-muted">ИИ-анализ ищет неточности в теме и связанных заданиях. Он не меняет материалы и не согласовывает их за вас.</p>
             <div className="review-quick">{QUICK.filter(q => item.kind === "test" || !q.includes("ключ")).map(q => <button key={q} disabled={disabled} onClick={() => setInstruction(q)}>{q}</button>)}</div>
             <label className="review-comment-label">Ваш вопрос, замечание или поручение агенту<textarea aria-label="Ваше замечание или поручение агенту" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="Спросите о содержании или опишите, что улучшить. Подсказки выше можно дополнить." rows={3} maxLength={5000} /></label>
+            <div className="review-model-control">{modelPicker}</div>
             <div className="review-actions"><button className="btn" disabled={disabled || !instruction.trim()} onClick={() => void askAgent()}>Спросить агента</button><button className="btn primary" disabled={disabled || !instruction.trim()} onClick={() => void suggest()}><Icon name="spark" size={15} />Предложить правку</button><button className="btn" disabled={disabled} onClick={() => setEdit({ item, value: structuredClone(item.value) })}>Редактировать самому</button></div>
             {agentAnswer && <div className="review-agent-answer" role="status"><strong>Ответ агента</strong><p>{agentAnswer}</p><small>Материал не изменён. Для изменения используйте «Предложить правку».</small></div>}
           </section>

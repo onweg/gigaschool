@@ -63,7 +63,7 @@ const EXAMPLES: { icon: IconName; title: string; detail: string; text: string }[
 export function ChatWorkspace({
   session, messages, draft, onDraft, onSubmit, answers, onAnswers, onSendAnswers, preferences, onPreferences,
   references, onReferences, onApprove, exports, exportUrl, busy, working, retry,
-  children, section, navigationVersion, onSelect,
+  children, section, navigationVersion, onSelect, modelPicker,
 }: {
   session: SessionState | null;
   messages: Message[];
@@ -84,6 +84,7 @@ export function ChatWorkspace({
   working: boolean;
   retry: (() => void) | null;
   children: ReactNode;
+  modelPicker: ReactNode;
   section: SectionKey;
   navigationVersion: number;
   onSelect: (key: SectionKey) => void;
@@ -338,6 +339,7 @@ export function ChatWorkspace({
           <div className="composer-tools">
             <References items={references} onChange={onReferences} disabled={Boolean(session) || working} />
             <span className="composer-shortcut">⌘ / Ctrl ↵</span>
+            {modelPicker}
             <button className="send-button" disabled={working || !draft.trim()} onClick={submit} aria-label="Отправить сообщение"><Icon name="send" size={20} /></button>
           </div>
         </div>

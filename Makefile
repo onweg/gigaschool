@@ -33,18 +33,21 @@ LLM_MAX_PARALLEL ?= 2
 #: это режим отладки: `make deploy LLM_CACHE=1`.
 LLM_CACHE ?= 0
 
-env:        ## собрать .env из доступов площадки
-	@test -f $(PLATFORM_ENV) || { echo "нет $(PLATFORM_ENV)"; exit 1; }
-	@# docker --env-file не снимает кавычки: ключ "AQVN..." уедет вместе с ними
-	@# и авторизация развалится, поэтому чистим их здесь.
-	@sed 's/"//g' $(PLATFORM_ENV) > $(ENV_FILE)
-	@grep -q '^OPENAI_MODEL=' $(ENV_FILE) || echo "OPENAI_MODEL=$(MODEL)" >> $(ENV_FILE)
-	@# Телеметрия закрыта токеном; если его нет — генерируем и показываем один раз.
-	@grep -q '^METRICS_TOKEN=' $(ENV_FILE) || \
-		echo "METRICS_TOKEN=$$(python3 -c 'import secrets;print(secrets.token_urlsafe(18))')" >> $(ENV_FILE)
-	@echo "статистика:  #/stats?token=$$(grep '^METRICS_TOKEN=' $(ENV_FILE) | cut -d= -f2-)"
-	@chmod 600 $(ENV_FILE)
-	@echo "$(ENV_FILE) собран, модель: $$(grep '^OPENAI_MODEL=' $(ENV_FILE) | cut -d= -f2-)"
+env:        ## сохранить готовый .env или создать его из доступов площадки
+	@if test -f "$(ENV_FILE)"; then \
+		echo "Используется существующий $(ENV_FILE), настройки сохранены"; \
+	else \
+		test -f "$(PLATFORM_ENV)" || { echo "нет $(PLATFORM_ENV); создайте $(ENV_FILE) вручную"; exit 1; }; \
+		umask 077; \
+		sed 's/"//g' "$(PLATFORM_ENV)" > "$(ENV_FILE)"; \
+		printf '\n' >> "$(ENV_FILE)"; \
+		grep -q '^LLM_PROFILE=' "$(ENV_FILE)" || echo "LLM_PROFILE=hackathon" >> "$(ENV_FILE)"; \
+		grep -q '^OPENAI_MODEL=' "$(ENV_FILE)" || echo "OPENAI_MODEL=$(MODEL)" >> "$(ENV_FILE)"; \
+		grep -q '^METRICS_TOKEN=' "$(ENV_FILE)" || \
+			echo "METRICS_TOKEN=$$(python3 -c 'import secrets;print(secrets.token_urlsafe(18))')" >> "$(ENV_FILE)"; \
+		echo "$(ENV_FILE) создан из настроек площадки"; \
+	fi
+	@chmod 600 "$(ENV_FILE)"
 
 deploy: env   ## собрать и поднять оба контейнера на $(PORT)
 	docker network create acr 2>/dev/null || true

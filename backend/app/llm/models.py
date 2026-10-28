@@ -8,7 +8,7 @@ from app.llm.base import LLMProvider
 from app.llm.cache import CachedProvider
 from app.llm.openai_compat import OpenAICompatProvider
 
-from app.llm.catalog import MODELS, PRO, REASONING
+from app.llm.catalog import MODELS, PRO, REASONING, is_yandex_model
 
 selected_model: ContextVar[str] = ContextVar('selected_model', default='')
 
@@ -25,11 +25,22 @@ def token_cost(model: str, prompt: int, completion: int) -> float:
 
 
 class ModelRouter(LLMProvider):
-    def __init__(self, base: LLMProvider):
+    def __init__(self, base: LLMProvider, *, profile: str = "hackathon", configured_model: str = ""):
+        if profile not in ("hackathon", "yandex_dev"):
+            raise ValueError("неизвестный профиль моделей")
+        self.profile = profile
         self.base = base
         self.offline = base.name.startswith('mock')
-        self.default = PRO if self.offline else base.model
-        self.options = {k: dict(v) for k, v in MODELS.items()}
+        if profile == "yandex_dev":
+            self.default = configured_model if self.offline else base.model
+            if not is_yandex_model(self.default):
+                raise ValueError("yandex_dev: разрешён только настроенный YandexGPT")
+            self.options = {self.default: {'id': self.default, 'name': 'YandexGPT',
+                'description': 'Единственная модель тестового VPS', 'reasoning': False,
+                'input_per_million': None, 'output_per_million': None}}
+        else:
+            self.default = PRO if self.offline else base.model
+            self.options = {k: dict(v) for k, v in MODELS.items()}
         if self.default not in self.options:
             raise ValueError('разрешены только GigaChat 3 Pro и GigaChat 3.5 Reasoning')
         self.pool: dict[str, LLMProvider] = {}

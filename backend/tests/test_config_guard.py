@@ -18,7 +18,7 @@ from app.config import ConfigError, build_provider, get_settings, host_allowed
 def _clean_settings(monkeypatch: pytest.MonkeyPatch):
     """Каждому тесту — своё окружение и свежие настройки."""
     for name in (
-        "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
+        "LLM_PROFILE", "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
         "LLM_ALLOW_ANY_HOST", "LLM_EXTRA_HOSTS",
         "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
     ):
@@ -99,7 +99,7 @@ def test_yandex_model_refused_even_with_explicit_extra_host(monkeypatch: pytest.
     monkeypatch.setenv("LLM_EXTRA_HOSTS", "llm.api.cloud.yandex.net")
     get_settings.cache_clear()
 
-    with pytest.raises(ConfigError, match="разрешены только"):
+    with pytest.raises(ConfigError, match="не разрешён профилем"):
         build_provider()
 
 
@@ -158,15 +158,16 @@ def test_there_is_no_switch_to_disable_the_host_check() -> None:
     assert "allow_any" not in names
 
 
-def test_extra_host_can_be_added(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Площадка может выдать шлюз на другом домене — это настраивается."""
+def test_extra_host_cannot_expand_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Профиль нельзя расширить дополнительным доменом."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://llm.example-platform.ru/v1")
     monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv("LLM_EXTRA_HOSTS", "example-platform.ru")
     get_settings.cache_clear()
 
-    assert build_provider().name == "openai_compat"
+    with pytest.raises(ConfigError, match="не разрешён профилем"):
+        build_provider()
 
 
 def test_key_without_endpoint_says_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:

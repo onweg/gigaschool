@@ -57,7 +57,6 @@ export function App() {
       setDraftModel(current => current || (catalog.models.some(m => m.id === saved) ? saved : catalog.default_id));
     } catch (e) { setModelError(e instanceof ApiError ? e.full : "Не удалось загрузить модели"); }
   }
-  useEffect(() => { void loadModels(); }, []);
   const [health, setHealth] = useState<Health | null>(null);
   // Почему агент недоступен — показываем причину, а не просто красную точку.
   const [healthError, setHealthError] = useState<ApiError | null>(null);
@@ -82,8 +81,8 @@ export function App() {
   const [section, setSection] = useState<SectionKey>("program");
   const [navigationVersion, setNavigationVersion] = useState(0);
 
-  useEffect(() => {
-    api
+  async function refreshConnection() {
+    await Promise.all([loadModels(), api
       .health()
       .then((h) => {
         setHealth(h);
@@ -92,8 +91,9 @@ export function App() {
       .catch((error) => {
         setHealth(null);
         setHealthError(error instanceof ApiError ? error : null);
-      });
-  }, []);
+      })]);
+  }
+  useEffect(() => { void refreshConnection(); }, []);
 
   // Открытие по прямой ссылке и кнопка «назад» в браузере.
   useEffect(() => {
@@ -476,6 +476,8 @@ export function App() {
     goto("program");
   }
 
+  const modelPicker = <ModelPicker catalog={models} value={session?.model_id || draftModel || models?.default_id || ""} disabled={working || busyTopic !== null} onChange={chooseModel} loadError={modelError} onRetry={() => void refreshConnection()} />;
+
   return (
     <div className="shell">
       <Sidebar
@@ -490,8 +492,6 @@ export function App() {
       <main className="main">
         <header className="workspace-header">
           <div className="workspace-title">
-            <ModelPicker catalog={models} value={session?.model_id || draftModel || models?.default_id || ""} disabled={working || busyTopic !== null} onChange={chooseModel} loadError={modelError} onRetry={() => void loadModels()} />
-            <span className="workspace-divider">/</span>
             <span className="workspace-name">{section === "stats" ? "Статистика" : program?.meta.title || "Новая программа"}</span>
           </div>
           <span className={`connection ${health ? "online" : "unavailable"}`}
@@ -509,18 +509,20 @@ export function App() {
         {!health && healthError && (
           <div className="offline-banner error" role="alert">
             <b>{healthError.message}.</b> {healthError.hint}
+            <button className="connection-retry" onClick={() => void refreshConnection()}>Проверить подключение</button>
           </div>
         )}
 
         {loadError && <div className="offline-banner error" role="alert">{loadError} <button className="btn" onClick={reset}>Начать новую программу</button></div>}
         <div className="review-container" hidden={!["expert", "review", "approval"].includes(section)}>
-          <ReviewWorkspace onWorkingChange={setReviewWorking} active={["expert", "review", "approval"].includes(section)} session={session} mode={section === "approval" ? "approval" : section === "review" ? "review" : "expert"} onSession={(next) => { if (activeSession.current === next.id) setSession(next); }} onNavigate={goto} working={working || busyTopic !== null} />
+          <ReviewWorkspace modelPicker={modelPicker} onWorkingChange={setReviewWorking} active={["expert", "review", "approval"].includes(section)} session={session} mode={section === "approval" ? "approval" : section === "review" ? "review" : "expert"} onSession={(next) => { if (activeSession.current === next.id) setSession(next); }} onNavigate={goto} working={working || busyTopic !== null} />
         </div>
         <div className="stats-content" hidden={section !== "stats"}>
           {section === "stats" && <Stats />}
         </div>
         <div className="conversation-container" hidden={["stats", "expert", "review", "approval"].includes(section)}>
           <ChatWorkspace
+            modelPicker={modelPicker}
             session={session}
             messages={messages}
             draft={draft}

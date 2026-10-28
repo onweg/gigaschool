@@ -15,7 +15,7 @@ import os
 
 #: Всё, из чего config.py способен собрать живого провайдера.
 LLM_ENV = (
-    "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_AUTH_SCHEME",
+    "LLM_PROFILE", "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_AUTH_SCHEME",
     "LLM_CACHE", "LLM_MAX_PARALLEL",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
 )

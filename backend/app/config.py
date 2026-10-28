@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
-from app.llm.catalog import MODELS
+from app.llm.catalog import MODELS, YANDEX_HOST, is_yandex_model
 
 
 class ConfigError(RuntimeError):
@@ -139,6 +139,8 @@ class Settings(BaseModel):
     смены окружения — и ошибка конфигурации всплывает уже в бою.
     """
 
+    llm_profile: str = Field(default_factory=lambda: _env("LLM_PROFILE", default="hackathon"))
+
     # LLM: пусто — выбирается сам по наличию ключа; mock — офлайн-заглушка
     llm_provider: str = Field(default_factory=lambda: os.getenv("LLM_PROVIDER", ""))
     #: Без умолчания: адрес шлюза задаёт площадка, а молчаливая подстановка
@@ -153,7 +155,7 @@ class Settings(BaseModel):
     llm_auth_scheme: str = Field(
         default_factory=lambda: _env(
             "LLM_AUTH_SCHEME",
-            default="Bearer" if os.getenv("OPENAI_API_KEY") else "Api-Key",
+            default="Api-Key" if _env("LLM_PROFILE", default="hackathon") == "yandex_dev" else "Bearer",
         )
     )
     llm_timeout: float = Field(default_factory=lambda: _number("LLM_TIMEOUT", "180", float))
@@ -236,6 +238,10 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
 
     s = get_settings()
     _check_ranges(s)
+    if s.llm_profile not in ("hackathon", "yandex_dev"):
+        raise ConfigError("LLM_PROFILE: допустимы только hackathon и yandex_dev")
+    if s.llm_provider not in ("", "openai_compat", "mock"):
+        raise ConfigError("LLM_PROVIDER: допустимы только openai_compat и mock")
     for name, advice in RETIRED_ENV.items():
         # «0» и «false» ничего не включали — останавливать из-за них запуск
         # незачем: старый Makefile передавал LLM_ALLOW_ANY_HOST=0 всегда.
@@ -244,6 +250,8 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
     # Провайдер можно не задавать: есть ключ и модель — работаем с моделью.
     # Так запуск в чужой среде не скатывается на заглушку из-за забытой переменной.
     wants_live = s.llm_provider in ("", "openai_compat")
+    if wants_live and s.llm_api_key and not s.llm_model:
+        raise ConfigError("задан ключ, но не задана модель: укажите OPENAI_MODEL или LLM_MODEL")
     if wants_live and s.llm_api_key and s.llm_model:
         # Ключ уходит в HTTP-заголовок, а там допустима только латиница.
         # Живой случай: вместо ключа вставили подсказку «ВАШ_КЛЮЧ» — и
@@ -260,8 +268,17 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
                 "(или LLM_BASE_URL) — например, шлюз площадки из /opt/hackathon/ai.env"
             )
         extra = extra_hosts(s.llm_extra_hosts)
-        check_base_url(s.llm_base_url, extra)
-        if s.llm_model not in MODELS:
+        allowed = ALLOWED_LLM_HOSTS if s.llm_profile == "hackathon" else (YANDEX_HOST,)
+        if any(host not in allowed for host in extra):
+            raise ConfigError("LLM_EXTRA_HOSTS: дополнительный хост не разрешён профилем " + s.llm_profile)
+        check_base_url(s.llm_base_url, extra if s.llm_profile == "hackathon" else (YANDEX_HOST,))
+        if s.llm_profile == "yandex_dev":
+            parsed = urlparse(s.llm_base_url)
+            if parsed.scheme != "https" or parsed.hostname != YANDEX_HOST or parsed.port not in (None, 443) or parsed.path.rstrip('/') != '/v1' or parsed.query or parsed.fragment:
+                raise ConfigError("yandex_dev: адрес API должен быть https://llm.api.cloud.yandex.net/v1")
+            if not is_yandex_model(s.llm_model):
+                raise ConfigError("yandex_dev: разрешена только модель gpt://<folder-id>/yandexgpt/latest")
+        elif s.llm_model not in MODELS:
             raise ConfigError(
                 "разрешены только GigaChat 3 Pro и GigaChat 3.5 Reasoning. "
                 "Укажите OPENAI_MODEL (или LLM_MODEL): " + ", ".join(MODELS)
@@ -275,7 +292,7 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             name=s.llm_provider or "openai_compat",
             supports_json_mode=s.llm_json_mode,
             max_parallel=s.llm_max_parallel,
-            allowed_hosts=(*ALLOWED_LLM_HOSTS, *extra),
+            allowed_hosts=allowed,
         )
         if s.llm_cache:
             from app.llm.cache import CachedProvider
@@ -296,6 +313,8 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             "LLM_PROVIDER=mock при заданном ключе модели. Заглушка не генерирует "
             "содержание — уберите LLM_PROVIDER или ключ, смотря что вы хотели."
         )
+    if s.llm_profile == "yandex_dev" and not is_yandex_model(s.llm_model):
+        raise ConfigError("yandex_dev: укажите LLM_MODEL=gpt://<folder-id>/yandexgpt/latest")
     return MockProvider()
 
 
@@ -333,6 +352,7 @@ def describe_config() -> list[str]:
     key = s.llm_api_key
     masked = f"{key[:4]}…{key[-3:]}" if len(key) > 10 else ("задан" if key else "нет")
     lines = [
+        f"профиль:        {s.llm_profile}",
         f"провайдер:      {s.llm_provider or 'выбран по ключу'}",
         f"адрес модели:   {s.llm_base_url or '—'}",
         f"модель:         {s.llm_model or '—'}",
@@ -342,7 +362,7 @@ def describe_config() -> list[str]:
         f"данные:         {Path(s.data_dir).resolve()}",
     ]
     if s.llm_base_url:
-        rule = host_rule(s.llm_base_url, extra_hosts(s.llm_extra_hosts))
+        rule = host_rule(s.llm_base_url, (YANDEX_HOST,) if s.llm_profile == "yandex_dev" else ())
         host = urlparse(s.llm_base_url).hostname or "—"
         lines.append(f"проверка хоста: {host} — " + (f"разрешён: {rule}" if rule else "НЕ разрешён"))
     if s.llm_extra_hosts:

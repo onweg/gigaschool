@@ -115,6 +115,8 @@ async def test_parallel_sessions_share_gate_but_keep_models_and_prices():
     base = OpenAICompatProvider(base_url='https://api.cloud.ru/v1', api_key='fake', model=PRO, max_parallel=2)
     router = ModelRouter(base)
     assert router.pool[REASONING]._gate is base._gate
+    assert router.pool[REASONING].base_url == base.base_url
+    assert router.pool[REASONING].api_key == base.api_key
     sent = []
 
     async def post(payload, headers):
@@ -177,3 +179,14 @@ def test_mixed_usage_preserves_historical_cost():
     assert record.prompt_tokens == 2_000_000
     record.add(Usage(prompt_tokens=1000, cost_rub=0))
     assert record.cost_rub() == 634.24
+
+
+@pytest.mark.parametrize('field', ['base_url', 'api_key', 'provider', 'agent', 'api_url'])
+def test_browser_cannot_override_provider_configuration(field):
+    extra = {field: 'untrusted-override'}
+    for endpoint in ['/api/sessions', '/api/generate']:
+        response = client.post(endpoint, json={'text': 'Python', 'model_id': PRO, **extra})
+        assert response.status_code == 422, response.text
+    session = store.create()
+    response = client.post(f'/api/sessions/{session.id}/model', json={'model_id': PRO, **extra})
+    assert response.status_code == 422, response.text

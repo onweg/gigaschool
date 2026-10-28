@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChatWidget, type Message } from "./components/ChatWidget";
+import { useEffect, useMemo, useState } from "react";
+import { ChatWorkspace, type Message } from "./components/ChatWorkspace";
+import { Icon } from "./components/Icon";
 import { HoursTable } from "./components/HoursTable";
 import { Kit } from "./components/Kit";
 import { AnimatedNumber, Reveal } from "./components/Motion";
@@ -51,9 +52,8 @@ export function App() {
   const [busyTopic, setBusyTopic] = useState<string | null>(null);
   /** Действие для кнопки «Повторить» после неудачной сборки. */
   const [retry, setRetry] = useState<(() => void) | null>(null);
-  const [chatOpen, setChatOpen] = useState(true);
   const [section, setSection] = useState<SectionKey>("program");
-  const sectionRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
+  const [navigationVersion, setNavigationVersion] = useState(0);
 
   useEffect(() => {
     api
@@ -72,7 +72,8 @@ export function App() {
   useEffect(() => {
     const apply = (initial: boolean) => {
       const key = window.location.hash.replace(/^#\/?/, "").split("?")[0] as SectionKey;
-      if (!key) return;
+      if (!key) { setSection("program"); return; }
+      if (!["program", "competencies", "plan", "report", "kit", "exports", "stats"].includes(key)) return;
       // Статистика закрыта токеном. Если адрес остался в браузере с прошлого
       // раза, а токена нет, открывать форму ввода вместо главного экрана
       // незачем: человек пришёл за программой, а не за телеметрией. Но по
@@ -157,6 +158,7 @@ export function App() {
 
   function goto(key: SectionKey) {
     setSection(key);
+    setNavigationVersion((value) => value + 1);
     // Адрес в хэше: страницу статистики нужно уметь открыть по прямой ссылке,
     // а хэш не требует ни роутера, ни настройки сервера.
     window.location.hash = key === "program" ? "" : `#/${key}`;
@@ -164,7 +166,6 @@ export function App() {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
-    sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function guard<T>(key: string, action: () => Promise<T>) {
@@ -200,10 +201,10 @@ export function App() {
       say(
         "bot",
         code
-          ? `Темы ${code[1]}.${code[2]} в плане нет. Номера тем — в учебном плане слева.`
+          ? `Темы ${code[1]}.${code[2]} в плане нет. Номера тем — в разделе «Учебный план».`
           : "Правлю готовую программу по темам: напишите номер темы и что изменить, " +
             "например «тема 2.1: добавить примеры из банков» — пересоберу только её. " +
-            "Другая аудитория или объём — «Адаптировать», новая программа — кнопка «Новая»."
+            "Другая аудитория или объём — «Адаптировать» в разделе «Экспорт», новая программа — кнопка «Новая программа»."
       );
       return;
     }
@@ -284,7 +285,7 @@ export function App() {
     }
     setRetry(null);
     setSession(next);
-    setSection("program");
+    goto("program");
     const report = next.report_summary;
     say(
       "bot",
@@ -293,7 +294,7 @@ export function App() {
         0
       )} тем, ${next.program?.meta.total_hours} ч. Автопроверка: ошибок ${
         report?.errors ?? 0
-      }, предупреждений ${report?.warnings ?? 0}. Проверьте часы и компетенции слева.`
+      }, предупреждений ${report?.warnings ?? 0}. Проверьте часы и компетенции в карточке программы ниже.`
     );
   }
 
@@ -353,7 +354,7 @@ export function App() {
     setSession(next);
     setAdaptOpen(false);
     setAdaptTo({ audience: "", hours: "", type: "" });
-    setSection("plan");
+    goto("plan");
     say(
       "bot",
       "Программа адаптирована, исходная сохранена. " + next.changes.slice(0, 4).join("; ")
@@ -397,14 +398,16 @@ export function App() {
   function reset() {
     setSession(null);
     setMessages(messages.slice(0, 1));
+    setDraft("");
     setAnswers({});
     setReferences([]);
-    setSection("program");
+    setRetry(null);
+    setRefreshResult(null);
+    setAdaptOpen(false);
+    setAdaptTo({ audience: "", hours: "", type: "" });
+    goto("program");
   }
 
-  const bind = (key: SectionKey) => (el: HTMLDivElement | null) => {
-    sectionRefs.current[key] = el;
-  };
 
   return (
     <div className="shell">
@@ -413,41 +416,27 @@ export function App() {
         session={session}
         active={section}
         onSelect={goto}
+        onReset={reset}
+        working={working || busyTopic !== null}
         issues={summary ? summary.errors + summary.warnings : 0}
       />
-
       <main className="main">
-        <div className="topbar">
-          <span className="pill">
-            <span
-              className="dot"
-              style={{ color: health ? "var(--green)" : "var(--red)" }}
-            />
-            {health
-              ? `${health.llm_provider} · ${health.llm_model}`
-              : healthError?.message ?? "API недоступен"}
-          </span>
-          {summary && (
-            <span
-              className={`pill ${summary.errors ? "err" : summary.warnings ? "warn" : "accent"}`}
-            >
-              <span className="dot" />
-              автопроверка · {summary.errors} ошибок · {summary.warnings} предупреждений
-            </span>
-          )}
-          <div className="seg">
-            <button className="on">RU</button>
-            <button disabled>EN</button>
+        <header className="workspace-header">
+          <div className="workspace-title">
+            <span className="workspace-label">Мастерская программ</span>
+            <span className="workspace-divider">/</span>
+            <span className="workspace-name">{section === "stats" ? "Статистика" : program?.meta.title || "Новая программа"}</span>
           </div>
-        </div>
+          <span className={`connection ${health ? "online" : "unavailable"}`}
+            title={health ? `${health.llm_provider} · ${health.llm_model}` : healthError?.message ?? "Проверяем подключение"}>
+            <span className="dot" />
+            {health ? (health.offline_stub ? "Офлайн-режим" : "Агент на связи") : healthError ? "Нет связи" : "Подключение…"}
+          </span>
+        </header>
 
         {(health?.offline_stub || session?.offline_stub) && (
-          // Работу заглушки легко принять за настоящую: структура и часы
-          // у неё правильные. Поэтому говорим прямо и на каждом экране.
           <div className="offline-banner" role="status">
-            <b>Офлайн-режим.</b> Модель не подключена: структура, часы и разделы
-            шаблона настоящие, а тексты тем, вопросы и задания — заглушки.
-            Выгрузки помечены как черновик.
+            <b>Офлайн-режим.</b> Модель не подключена. Содержание — заглушки, выгрузки помечены как черновик.
           </div>
         )}
         {!health && healthError && (
@@ -456,43 +445,69 @@ export function App() {
           </div>
         )}
 
-        <div className="content">
-          {section === "stats" ? (
-            <Stats />
-          ) : !program ? (
-            <>
-              <h1 className="page-title">Программы обучения</h1>
-              <p className="page-lede">
-                Агент собирает программу по шаблону Академии цифрового развития и полный
-                комплект материалов к ней: карту компетенций, учебный план с точными часами,
-                тесты с ключами, задания семинаров и слайды лекций.
-              </p>
-              <div className="empty">
-                <div className="big">Здесь появится собранная программа</div>
-                Опишите задачу агенту в чате справа внизу. Часы считает детерминированный
-                солвер, нормативную базу подставляет проверенный реестр — модель не
-                придумывает ни цифр, ни номеров приказов.
-              </div>
-            </>
-          ) : (
-            <>
-              <h1 className="page-title">{program.meta.title}</h1>
-              <div className="row" style={{ marginBottom: 26 }}>
-                <span className="pill accent">
-                  {program.meta.program_type === "dpp_pk"
-                    ? "ДПП повышения квалификации"
-                    : "Общеразвивающая программа"}
-                </span>
-                <span className="pill">
-                  <AnimatedNumber value={program.meta.total_hours} /> ак. ч
-                </span>
-                <span className="pill">{program.meta.issued_document || "—"}</span>
-                {session && <span className="pill mono">{session.id}</span>}
-              </div>
-
-              <Reveal>
-                <div className="card" ref={bind("program")}>
+        <div className="stats-content" hidden={section !== "stats"}>
+          {section === "stats" && <Stats />}
+        </div>
+        <div className="conversation-container" hidden={section === "stats"}>
+          <ChatWorkspace
+            session={session}
+            messages={messages}
+            draft={draft}
+            onDraft={setDraft}
+            onSubmit={(text) => void submitRequest(text)}
+            answers={answers}
+            onAnswers={setAnswers}
+            onSendAnswers={() => void sendAnswers()}
+            references={references}
+            onReferences={setReferences}
+            onApprove={() => void approveAndFill()}
+            exports={availableExports}
+            exportUrl={(kind) => api.exportUrl(session?.id ?? "", kind)}
+            busy={busy}
+            working={working || busyTopic !== null}
+            retry={retry}
+            section={section}
+            navigationVersion={navigationVersion}
+            onSelect={goto}
+          >
+            {program && (
+              <section key={session?.id} className="program-artifact" aria-label="Образовательная программа">
+                <div className="artifact-heading">
+                  <span className="artifact-icon"><Icon name="program" size={22} /></span>
+                  <div>
+                    <div className="eyebrow">{session?.stage === "ready" ? "Образовательная программа" : "Каркас программы"}</div>
+                    <h2>{program.meta.title}</h2>
+                  </div>
+                  <span className="artifact-hours">{program.meta.total_hours}<small>ак. часов</small></span>
+                </div>
+                <div className="artifact-meta">
+                  <span>{program.meta.program_type === "dpp_pk" ? "Повышение квалификации" : "Общеразвивающая"}</span>
+                  <span>{program.modules.length} модулей</span>
+                  <span>{program.modules.reduce((n, m) => n + m.topics.length, 0)} тем</span>
+                </div>
+                <nav className="artifact-tabs" aria-label="Разделы программы">
+                  {([
+                    ["program", "Обзор"], ["plan", "Учебный план"], ["competencies", "Компетенции"],
+                    ["kit", "Материалы"], ["report", "Проверка"], ["exports", "Экспорт"],
+                  ] as [SectionKey, string][]).map(([key, label]) => (
+                    <button key={key} className={section === key ? "selected" : ""}
+                      aria-current={section === key ? "page" : undefined} onClick={() => goto(key)}>
+                      {label}{key === "report" && summary && summary.errors + summary.warnings > 0 && (
+                        <span className="tab-count">{summary.errors + summary.warnings}</span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
+                <div className="artifact-body">
+              <div hidden={section !== "program"}>
+<Reveal>
+                <div className="card">
                   <h3>Паспорт программы</h3>
+                  <dl className="program-facts">
+                    <div><dt>Для кого</dt><dd>{program.meta.audience || "—"}</dd></div>
+                    <div><dt>Форма обучения</dt><dd>{program.meta.study_form || "—"}</dd></div>
+                    <div><dt>Документ</dt><dd>{program.meta.issued_document || "—"}</dd></div>
+                  </dl>
                   <div className="lede" style={{ marginBottom: 14 }}>
                     <b>Цель.</b> {program.goal}
                   </div>
@@ -524,9 +539,11 @@ export function App() {
                   )}
                 </div>
               </Reveal>
+              </div>
 
-              <Reveal delay={0.04}>
-                <div className="card" ref={bind("competencies")}>
+              <div hidden={section !== "competencies"}>
+<Reveal delay={0.04}>
+                <div className="card">
                   <h3>
                     Карта компетенций <span className="n">{program.outcomes.length} РО</span>
                   </h3>
@@ -562,9 +579,11 @@ export function App() {
                   })}
                 </div>
               </Reveal>
+              </div>
 
-              <Reveal delay={0.08}>
-                <div className="card" ref={bind("plan")}>
+              <div hidden={section !== "plan"}>
+<Reveal delay={0.08}>
+                <div className="card">
                   <h3>Учебно-тематический план</h3>
                   <HoursTable
                     program={program}
@@ -573,9 +592,11 @@ export function App() {
                   />
                 </div>
               </Reveal>
+              </div>
 
-              <Reveal delay={0.12}>
-                <div className="card" ref={bind("report")}>
+              <div hidden={section !== "report"}>
+<Reveal delay={0.12}>
+                <div className="card">
                   <h3>
                     Отчёт автопроверки
                     {summary && (
@@ -588,70 +609,20 @@ export function App() {
                   {session && <SourceCheck session={session} onChange={setSession} />}
                 </div>
               </Reveal>
-
-              <div ref={bind("kit")}>
-                <Kit program={program} />
               </div>
 
-              <Reveal delay={0.08}>
-                <div className="card">
-                  <h3>Экономика генерации</h3>
-                  <div className="metrics">
-                    <div className="metric">
-                      <div className="v">
-                        <AnimatedNumber
-                          value={session?.economics.tokens ?? 0}
-                          format={(v) => Math.round(v).toLocaleString("ru")}
-                        />
-                      </div>
-                      <div className="k">токенов</div>
-                    </div>
-                    <div className="metric">
-                      <div className="v">
-                        <AnimatedNumber value={session?.economics.cost_rub ?? 0} decimals={2} /> ₽
-                      </div>
-                      <div className="k">стоимость генерации</div>
-                    </div>
-                    <div className="metric">
-                      <div className="v">
-                        <AnimatedNumber value={session?.economics.manual_hours_baseline ?? 0} /> ч
-                      </div>
-                      <div className="k">ручная сборка программы</div>
-                    </div>
-                    <div className="metric">
-                      <div className="v">
-                        <AnimatedNumber value={session?.economics.llm_calls ?? 0} />
-                      </div>
-                      <div className="k">вызовов модели</div>
-                    </div>
-                  </div>
-                </div>
-              </Reveal>
+              <div hidden={section !== "kit"}>
+                {!program.test_questions.length && !program.seminar_tasks.length && !program.lecture_plans.length ? (
+                  <div className="material-placeholder"><Icon name="kit" size={32} /><h3>Здесь будет полный комплект</h3><p>Утвердите каркас, чтобы собрать тесты, задания и слайды.</p></div>
+                ) : <Kit program={program} />}
+              </div>
 
-              <Reveal delay={0.1}>
-                <div className="card" ref={bind("exports")}>
+
+
+              <div hidden={section !== "exports"}>
+<Reveal delay={0.1}>
+                <div className="card">
                   <h3>Действия и выгрузки</h3>
-                  <div className="row" style={{ marginBottom: 18 }}>
-                    {session?.stage === "skeleton" && (
-                      <button
-                        className="btn primary"
-                        disabled={busy !== null}
-                        onClick={() => void approveAndFill()}
-                      >
-                        {busy ? "…" : "Утвердить каркас и собрать комплект"}
-                      </button>
-                    )}
-                    {session?.stage === "content" && (
-                      <span className="pill warn">
-                        <span className="dot" /> генерация содержания
-                      </span>
-                    )}
-                    {session?.stage === "ready" && (
-                      <span className="pill accent">
-                        <span className="dot" /> комплект готов
-                      </span>
-                    )}
-                  </div>
                   {session?.program && (
                     <div className="adapt-box">
                       <button
@@ -775,32 +746,61 @@ export function App() {
                   </div>
                 </div>
               </Reveal>
-            </>
-          )}
+              </div>
+
+              <details className="economics-details" hidden={section !== "exports"}>
+                <summary>Экономика генерации</summary>
+              <Reveal delay={0.08}>
+                <div className="card">
+                  
+                  <div className="metrics">
+                    <div className="metric">
+                      <div className="v">
+                        <AnimatedNumber
+                          value={session?.economics.tokens ?? 0}
+                          format={(v) => Math.round(v).toLocaleString("ru")}
+                        />
+                      </div>
+                      <div className="k">токенов</div>
+                    </div>
+                    <div className="metric">
+                      <div className="v">
+                        <AnimatedNumber value={session?.economics.cost_rub ?? 0} decimals={2} /> ₽
+                      </div>
+                      <div className="k">стоимость генерации</div>
+                    </div>
+                    <div className="metric">
+                      <div className="v">
+                        <AnimatedNumber value={session?.economics.manual_hours_baseline ?? 0} /> ч
+                      </div>
+                      <div className="k">ручная сборка программы</div>
+                    </div>
+                    <div className="metric">
+                      <div className="v">
+                        <AnimatedNumber value={session?.economics.llm_calls ?? 0} />
+                      </div>
+                      <div className="k">вызовов модели</div>
+                    </div>
+                  </div>
+                </div>
+              </Reveal>
+              </details>
+
+                </div>
+                <div className="artifact-footer">
+                  <span className={summary?.errors ? "artifact-warning" : ""}>
+                    <Icon name={summary?.errors ? "report" : "check"} size={15} />
+                    {summary?.errors ? `Ошибок: ${summary.errors}` : "Часы и структура проверены"}
+                  </span>
+                  <button onClick={() => goto(section === "program" ? "plan" : "exports")}>
+                    {section === "program" ? "Посмотреть учебный план" : "Действия и экспорт"}<Icon name="arrow" size={15} />
+                  </button>
+                </div>
+              </section>
+            )}
+          </ChatWorkspace>
         </div>
       </main>
-
-      <ChatWidget
-        open={chatOpen}
-        onOpenChange={setChatOpen}
-        session={session}
-        messages={messages}
-        draft={draft}
-        onDraft={setDraft}
-        onSubmit={(text) => void submitRequest(text)}
-        answers={answers}
-        onAnswers={setAnswers}
-        onSendAnswers={() => void sendAnswers()}
-        references={references}
-        onReferences={setReferences}
-        onApprove={() => void approveAndFill()}
-        exports={availableExports}
-        exportUrl={(kind) => api.exportUrl(session?.id ?? "", kind)}
-        busy={busy}
-        working={working}
-        retry={retry}
-        onReset={reset}
-      />
     </div>
   );
 }

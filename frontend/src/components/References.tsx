@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useRef, useState } from "react";
 import { api, type ParsedReference } from "../lib/api";
 import { SPRING } from "./Motion";
+import { Icon } from "./Icon";
 
 const ACCEPT = ".docx,.pdf,.txt,.md";
 
@@ -43,9 +44,20 @@ export function References({
   }
 
   return (
-    <div>
+    <div className="references-control">
       <motion.div
         className={`dropzone ${over ? "over" : ""}`}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
+        aria-label="Прикрепить референс"
+        title={disabled ? "Референсы добавляются перед началом программы" : "Прошлая программа, профстандарт или шаблон: .docx, .pdf, .txt, .md"}
+        onKeyDown={(event) => {
+          if (!disabled && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
         onDragOver={(event) => {
           event.preventDefault();
           if (!disabled) setOver(true);
@@ -71,11 +83,8 @@ export function References({
             event.target.value = "";
           }}
         />
-        <span className="dz-icon">＋</span>
-        <span>
-          Референсы: прошлая программа, профстандарт, шаблон
-          <span className="dz-hint"> · .docx .pdf .txt — перетащите или нажмите</span>
-        </span>
+        <Icon name="clip" size={17} />
+        <span>Прикрепить файл</span>
       </motion.div>
 
       <AnimatePresence initial={false}>

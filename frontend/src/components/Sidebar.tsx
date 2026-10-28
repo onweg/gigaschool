@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Fragment } from "react";
 import type { Program, SessionState } from "../lib/types";
+import { Icon } from "./Icon";
 
 export type SectionKey =
   | "program"
@@ -10,16 +11,6 @@ export type SectionKey =
   | "kit"
   | "exports"
   | "stats";
-
-const ICONS: Record<SectionKey, string> = {
-  program: "◆",
-  competencies: "◎",
-  plan: "▤",
-  report: "✓",
-  kit: "❏",
-  exports: "↓",
-  stats: "▦",
-};
 
 const LABELS: Record<SectionKey, string> = {
   program: "Программа",
@@ -38,12 +29,16 @@ export function Sidebar({
   active,
   onSelect,
   issues,
+  onReset,
+  working,
 }: {
   program: Program | null;
   session: SessionState | null;
   active: SectionKey;
   onSelect: (key: SectionKey) => void;
   issues: number;
+  onReset: () => void;
+  working: boolean;
 }) {
   const kitCount =
     (program?.test_questions.length ?? 0) +
@@ -61,7 +56,7 @@ export function Sidebar({
   };
 
   const ready: Record<SectionKey, boolean> = {
-    program: Boolean(program),
+    program: true,
     competencies: Boolean(program?.outcomes.length),
     plan: Boolean(program?.modules.length),
     report: Boolean(session?.report),
@@ -77,18 +72,22 @@ export function Sidebar({
         <div className="logo">
           АЦР<sup>®</sup>
         </div>
+        <div className="brand-caption">Академия<br />цифрового развития</div>
       </div>
 
-      <nav className="nav">
+      <button className="new-program" disabled={working} onClick={onReset}><Icon name="plus" size={18} />Новая программа</button>
+      <div className="nav-caption">Рабочее пространство</div>
+      <nav className="nav" aria-label="Основная навигация">
         {(Object.keys(LABELS) as SectionKey[]).map((key) => (
           <Fragment key={key}>
           {key === "stats" && <div className="nav-split" />}
           <button
             className={`nav-item ${active === key ? "active" : ""}`}
+            aria-current={active === key ? "page" : undefined}
             disabled={!ready[key]}
             onClick={() => onSelect(key)}
           >
-            <span className="ico">{ICONS[key]}</span>
+            <span className="ico"><Icon name={key} size={19} /></span>
             {LABELS[key]}
             {counts[key] && <span className="count">{counts[key]}</span>}
             {active === key && (
@@ -111,8 +110,7 @@ export function Sidebar({
 
       <div className="sidebar-foot">
         <div className="avatar">МТ</div>
-        <div className="who">Методист</div>
-        <div className="role">Академия цифрового развития</div>
+        <div><div className="who">Методист</div><div className="role">Ваше рабочее пространство</div></div>
       </div>
     </aside>
   );

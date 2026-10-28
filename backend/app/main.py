@@ -317,6 +317,11 @@ def _state(session: Session) -> dict[str, Any]:
     }
 
 
+from app.routes.review import review_router
+
+app.include_router(review_router(provider, _session_or_404, _state, _safe))
+
+
 # --------------------------------------------------------------------------- #
 # Служебные
 # --------------------------------------------------------------------------- #

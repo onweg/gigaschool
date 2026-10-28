@@ -10,7 +10,10 @@ export type SectionKey =
   | "report"
   | "kit"
   | "exports"
-  | "stats";
+  | "stats"
+  | "expert"
+  | "review"
+  | "approval";
 
 const LABELS: Record<SectionKey, string> = {
   program: "Программа",
@@ -19,6 +22,9 @@ const LABELS: Record<SectionKey, string> = {
   report: "Автопроверка",
   kit: "Комплект",
   exports: "Выгрузки",
+  expert: "Экспертиза",
+  review: "Правки эксперта",
+  approval: "Согласование",
   stats: "Статистика",
 };
 
@@ -52,7 +58,7 @@ export function Sidebar({
     report: issues ? String(issues) : program ? "0" : "",
     kit: kitCount ? String(kitCount) : "",
     exports: "",
-    stats: "",
+    stats: "", expert: "", review: "", approval: "",
   };
 
   const ready: Record<SectionKey, boolean> = {
@@ -63,7 +69,7 @@ export function Sidebar({
     kit: kitCount > 0,
     exports: Boolean(program),
     // Панель телеметрии не зависит от текущей программы: данные копятся всегда.
-    stats: true,
+    stats: true, expert: Boolean(program), review: Boolean(program), approval: Boolean(program),
   };
 
   return (
@@ -80,7 +86,7 @@ export function Sidebar({
       <nav className="nav" aria-label="Основная навигация">
         {(Object.keys(LABELS) as SectionKey[]).map((key) => (
           <Fragment key={key}>
-          {key === "stats" && <div className="nav-split" />}
+          {(key === "stats" || key === "expert") && <div className="nav-split" />}
           <button
             className={`nav-item ${active === key ? "active" : ""}`}
             aria-current={active === key ? "page" : undefined}
@@ -109,8 +115,8 @@ export function Sidebar({
       </nav>
 
       <div className="sidebar-foot">
-        <div className="avatar">МТ</div>
-        <div><div className="who">Методист</div><div className="role">Ваше рабочее пространство</div></div>
+        <div className="avatar">{active === "expert" ? "ЭК" : active === "approval" ? "РК" : "МТ"}</div>
+        <div><div className="who">{active === "expert" ? "Эксперт" : active === "approval" ? "Руководитель" : "Методист"}</div><div className="role">Ваше рабочее пространство</div></div>
       </div>
     </aside>
   );

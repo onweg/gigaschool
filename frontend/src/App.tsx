@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatWorkspace, type Message } from "./components/ChatWorkspace";
+import { ReviewWorkspace } from "./components/ReviewWorkspace";
 import { Icon } from "./components/Icon";
 import { PREFERENCE_LABELS } from "./components/RequestPreferences";
 import { HoursTable } from "./components/HoursTable";
@@ -40,6 +41,9 @@ const STUDY_FORM_LABEL: Record<string, string> = {
 };
 
 export function App() {
+  const restoreVersion = useRef(0);
+  const activeSession = useRef<string | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [health, setHealth] = useState<Health | null>(null);
   // Почему агент недоступен — показываем причину, а не просто красную точку.
   const [healthError, setHealthError] = useState<ApiError | null>(null);
@@ -57,6 +61,7 @@ export function App() {
   const [preferences, setPreferences] = useState<Record<string, string>>({});
   const [references, setReferences] = useState<ParsedReference[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [reviewWorking, setReviewWorking] = useState(false);
   const [busyTopic, setBusyTopic] = useState<string | null>(null);
   /** Действие для кнопки «Повторить» после неудачной сборки. */
   const [retry, setRetry] = useState<(() => void) | null>(null);
@@ -81,7 +86,7 @@ export function App() {
     const apply = (initial: boolean) => {
       const key = window.location.hash.replace(/^#\/?/, "").split("?")[0] as SectionKey;
       if (!key) { setSection("program"); return; }
-      if (!["program", "competencies", "plan", "report", "kit", "exports", "stats"].includes(key)) return;
+      if (!["program", "competencies", "plan", "report", "kit", "exports", "stats", "expert", "review", "approval"].includes(key)) return;
       // Статистика закрыта токеном. Если адрес остался в браузере с прошлого
       // раза, а токена нет, открывать форму ввода вместо главного экрана
       // незачем: человек пришёл за программой, а не за телеметрией. Но по
@@ -99,17 +104,41 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // Сессия живёт на сервере, но страница после перезагрузки начинает с
-  // нуля. Пока есть начатая работа, браузер переспрашивает перед уходом.
+  // Прямые ссылки на одну программу работают у всех участников и после перезагрузки.
+  useEffect(() => {
+    let disposed = false;
+    const restore = async (initial = false) => {
+      let saved = "";
+      try { if (initial) saved = localStorage.getItem("acr.session") || ""; } catch { /* private mode */ }
+      const id = new URLSearchParams(location.hash.split("?")[1] || "").get("session") || saved;
+      if (!id || id === activeSession.current) return;
+      const request = ++restoreVersion.current;
+      setLoadError("");
+      try {
+        const next = await api.state(id);
+        if (disposed || request !== restoreVersion.current) return;
+        activeSession.current = id;
+        setSession(next);
+        setMessages(prev => [prev[0], { role: "bot", text: "Программа открыта. Можно продолжить работу с материалами." }]);
+      } catch (error) {
+        if (!disposed && request === restoreVersion.current) setLoadError(error instanceof ApiError ? error.full : "Не удалось открыть программу");
+      }
+    };
+    void restore(true);
+    const changed = () => void restore();
+    window.addEventListener("hashchange", changed);
+    return () => { disposed = true; window.removeEventListener("hashchange", changed); };
+  }, []);
+
   useEffect(() => {
     if (!session) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = ""; // старые Safari и Chrome без этого не спрашивают
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [session]);
+    activeSession.current = session.id;
+    try { localStorage.setItem("acr.session", session.id); } catch { /* private mode */ }
+    const path = location.hash.split("?")[0] || "#/program";
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    params.set("session", session.id);
+    history.replaceState(null, "", `${path}?${params}`);
+  }, [session?.id]);
 
   // Пока идёт генерация содержания, подтягиваем состояние: шаги видно сразу.
   useEffect(() => {
@@ -146,7 +175,7 @@ export function App() {
 
   const program = session?.program ?? null;
   const summary = session?.report_summary;
-  const working = busy !== null || session?.stage === "content";
+  const working = busy !== null || session?.stage === "content" || reviewWorking;
 
   const availableExports = useMemo(
     () =>
@@ -169,7 +198,7 @@ export function App() {
     setNavigationVersion((value) => value + 1);
     // Адрес в хэше: страницу статистики нужно уметь открыть по прямой ссылке,
     // а хэш не требует ни роутера, ни настройки сервера.
-    window.location.hash = key === "program" ? "" : `#/${key}`;
+    window.location.hash = `#/${key}${activeSession.current ? `?session=${activeSession.current}` : ""}`;
     if (key === "stats") {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -404,6 +433,10 @@ export function App() {
   }
 
   function reset() {
+    restoreVersion.current += 1;
+    activeSession.current = null;
+    try { localStorage.removeItem("acr.session"); } catch { /* private mode */ }
+    setLoadError("");
     setSession(null);
     setMessages(messages.slice(0, 1));
     setDraft("");
@@ -453,10 +486,14 @@ export function App() {
           </div>
         )}
 
+        {loadError && <div className="offline-banner error" role="alert">{loadError} <button className="btn" onClick={reset}>Начать новую программу</button></div>}
+        <div className="review-container" hidden={!["expert", "review", "approval"].includes(section)}>
+          <ReviewWorkspace onWorkingChange={setReviewWorking} active={["expert", "review", "approval"].includes(section)} session={session} mode={section === "approval" ? "approval" : section === "review" ? "review" : "expert"} onSession={(next) => { if (activeSession.current === next.id) setSession(next); }} onNavigate={goto} working={working || busyTopic !== null} />
+        </div>
         <div className="stats-content" hidden={section !== "stats"}>
           {section === "stats" && <Stats />}
         </div>
-        <div className="conversation-container" hidden={section === "stats"}>
+        <div className="conversation-container" hidden={["stats", "expert", "review", "approval"].includes(section)}>
           <ChatWorkspace
             session={session}
             messages={messages}
@@ -512,6 +549,7 @@ export function App() {
               <div hidden={section !== "program"}>
                 <Reveal>
                 <div className="card">
+                  <div className="team-entry"><div><strong>Можно подключить эксперта</strong><span>Проверка материалов и предложения правок — когда нужна помощь коллеги.</span></div><button className="btn" onClick={() => goto("expert")}>Открыть экспертизу <Icon name="arrow" size={14} /></button></div>
                   <h3>Паспорт программы</h3>
                   {program.learning_preferences && Object.values(program.learning_preferences).some((value) => value.length > 0) && (
                     <details className="saved-preferences">

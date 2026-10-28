@@ -1,6 +1,9 @@
 import type { CSSProperties } from "react";
 
 const paths = {
+  expert: "M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm5-2 6 6M7 10l2 2 4-4",
+  review: "M4 3h12v18H4V3Zm4 5h4m-4 4h4m-4 4h3m7-9 3 3-6 6h-3v-3l6-6Z",
+  approval: "M5 3h14v18H5V3Zm3 5h8m-8 4h5m-5 4 2 2 5-5",
   spark: "m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z",
   program: "M4 5h6a3 3 0 0 1 3 3v13a4 4 0 0 0-4-2H4V5Zm16 0h-4a3 3 0 0 0-3 3m7-3v14h-3a4 4 0 0 0-4 2",
   competencies: "M12 7v4m0 0H5v5m7-5h7v5M9 3h6v4H9V3ZM2 16h6v5H2v-5Zm14 0h6v5h-6v-5Z",

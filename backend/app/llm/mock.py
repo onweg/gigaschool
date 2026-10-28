@@ -245,6 +245,8 @@ def _mock_attestation_criteria(user: str) -> dict:
 
 
 _DISPATCH = {
+    "expert_review": lambda _: {"findings": []},
+    "expert_edit": lambda user: {"replacement": json.loads(user.split("Материал: ", 1)[1].split("\nИнструкция эксперта:", 1)[0])},
     "intake": _mock_intake,
     "attestation_criteria": _mock_attestation_criteria,
     "refresh": _mock_refresh,

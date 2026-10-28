@@ -1,4 +1,5 @@
 import type { SessionState } from "./types";
+import type { MaterialValue, ReviewData } from "./review";
 
 const BASE = "/api";
 
@@ -237,6 +238,24 @@ export const metrics = {
 };
 
 export const api = {
+  review: (id: string) => call<ReviewData>(`/sessions/${id}/review`),
+  scanReview: (id: string, topic_id: string) => call<ReviewData>(`/sessions/${id}/review/scan`, {
+    method: "POST", body: JSON.stringify({ topic_id }),
+  }),
+  reviewDecision: (id: string, data: { item_id: string; revision: string; status: string; author: string; comment: string }) =>
+    call<ReviewData>(`/sessions/${id}/review/decisions`, { method: "POST", body: JSON.stringify(data) }),
+  dismissFinding: (id: string, finding: string, revision: string) =>
+    call<ReviewData>(`/sessions/${id}/review/findings/${finding}/dismiss`, { method: "POST", body: JSON.stringify({ revision }) }),
+  suggestEdit: (id: string, data: { item_id: string; revision: string; instruction: string }) =>
+    call<{ replacement: MaterialValue; offline: boolean }>(`/sessions/${id}/review/suggest`, { method: "POST", body: JSON.stringify(data) }),
+  proposeEdit: (id: string, data: { item_id: string; revision: string; after: MaterialValue; author: string; comment: string }) =>
+    call<ReviewData>(`/sessions/${id}/review/proposals`, { method: "POST", body: JSON.stringify(data) }),
+  resolveEdit: (id: string, proposal: string, action: "accept" | "reject") =>
+    call<{ review: ReviewData; session: SessionState }>(`/sessions/${id}/review/proposals/${proposal}/resolve`, {
+      method: "POST", body: JSON.stringify({ action }),
+    }),
+  approval: (id: string, data: { revision: string; decision: "approved" | "returned"; author: string; comment: string }) =>
+    call<ReviewData>(`/sessions/${id}/review/approval`, { method: "POST", body: JSON.stringify(data) }),
   parseReference: (file: File) => upload<ParsedReference>("/references/parse", file),
   health: () => call<Health>("/health"),
   skills: () => call<{ name: string; title: string; description: string }[]>("/skills"),

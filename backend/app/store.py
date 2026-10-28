@@ -23,6 +23,7 @@ from app.core.validate import ValidationReport
 from app.llm.base import Usage
 from app.schemas.ir import Program
 from app.schemas.request import ClarifyingQuestion, ProgramRequest
+from app.schemas.review import ReviewState
 
 
 class Stage(str, Enum):
@@ -90,6 +91,7 @@ class Session(BaseModel):
     request: ProgramRequest = Field(default_factory=ProgramRequest)
     questions: list[ClarifyingQuestion] = Field(default_factory=list)
     program: Program | None = None
+    review: ReviewState = Field(default_factory=ReviewState)
     report: ValidationReport | None = None
     usage: UsageRecord = Field(default_factory=UsageRecord)
     events: list[Event] = Field(default_factory=list)

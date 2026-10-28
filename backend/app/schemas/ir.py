@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from app.schemas.preferences import LearningPreferences
 
 
 # --------------------------------------------------------------------------- #
@@ -301,6 +302,7 @@ class Program(BaseModel):
     """Корневой объект. Сериализуется в JSON как часть выгрузки комплекта."""
 
     schema_version: str = "1.0"
+    learning_preferences: LearningPreferences = Field(default_factory=LearningPreferences)
     meta: ProgramMeta
     annotation: str = ""
     relevance: str = ""

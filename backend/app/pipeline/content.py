@@ -41,7 +41,11 @@ def _outcomes_block(program: Program, topic: Topic) -> str:
         for o in program.outcomes
         if o.id in topic.outcome_ids
     ]
-    return "\n".join(lines) or "- не заданы"
+    result = "\n".join(lines) or "- не заданы"
+    preferences = program.learning_preferences.instructions()
+    if preferences:
+        result += "\n\nПожелания методиста к программе (учитывай применимые к этой теме):\n" + preferences
+    return result
 
 
 def _siblings_block(module: Module, topic: Topic) -> str:
@@ -387,7 +391,8 @@ async def ensure_attestation_criteria(provider: LLMProvider, program: Program) -
         f"Программа: {program.meta.title} ({program.meta.total_hours:g} ак. ч)\n"
         f"Аудитория: {program.meta.audience or '—'}\n"
         f"Форма аттестации: {attestation.form}\n"
-        f"Описание: {attestation.description or '—'}"
+        f"Описание: {attestation.description or '—'}\n"
+        f"{program.learning_preferences.instructions()}"
     )
     try:
         data, usage = await provider.complete_json(system=system, user=user, max_tokens=700)

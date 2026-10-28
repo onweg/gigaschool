@@ -48,6 +48,7 @@ def describe_program(program: Program) -> str:
         f"Аудитория: {program.meta.audience or '—'}",
         f"Входной уровень: {program.meta.entry_level or '—'}",
         f"Цель: {program.goal}",
+        program.learning_preferences.instructions(),
     ]
     if program.outcomes:
         lines.append("Результаты обучения:")
@@ -70,6 +71,7 @@ def build_target_request(source: Program, changes: dict) -> ProgramRequest:
     """Запрос на адаптированную программу: исходные параметры плюс правки."""
     meta = source.meta
     request = ProgramRequest(
+        **source.learning_preferences.model_dump(),
         title=str(changes.get("title") or meta.title),
         program_type=changes.get("program_type") or meta.program_type,
         program_type_confidence=1.0,

@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { ChatWorkspace, type Message } from "./components/ChatWorkspace";
 import { Icon } from "./components/Icon";
+import { PREFERENCE_LABELS } from "./components/RequestPreferences";
 import { HoursTable } from "./components/HoursTable";
 import { Kit } from "./components/Kit";
 import { AnimatedNumber, Reveal } from "./components/Motion";
@@ -53,6 +54,7 @@ export function App() {
   ]);
   const [draft, setDraft] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [preferences, setPreferences] = useState<Record<string, string>>({});
   const [references, setReferences] = useState<ParsedReference[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [busyTopic, setBusyTopic] = useState<string | null>(null);
@@ -217,19 +219,18 @@ export function App() {
     say("user", text);
     setDraft("");
     const next = await guard("create", () =>
-      api.createSession(text, references.map((ref) => ref.text))
+      api.createSession(text, references.map((ref) => ref.text), preferences)
     );
     if (!next) return;
     setSession(next);
+    setPreferences({});
     if (references.length) {
       say("sys", `Референсов принято: ${references.length} — учтена структура, не текст`);
     }
     if (next.questions.length) {
       say(
         "bot",
-        `Чтобы не выдумывать параметры, уточню ${next.questions.length} ${
-          next.questions.length === 1 ? "момент" : "момента"
-        }.`
+        "Уточню несколько деталей, которых не хватает в запросе. Дополнительные пожелания можно пропустить."
       );
     } else {
       say("bot", "Параметров достаточно — собираю каркас.");
@@ -239,20 +240,21 @@ export function App() {
 
   async function sendAnswers() {
     if (!session) return;
-    const filled = Object.fromEntries(
+    const filled = { ...preferences, ...Object.fromEntries(
       Object.entries(answers).filter(([, value]) => value.trim())
-    );
+    ) };
     if (!Object.keys(filled).length) return;
     say(
       "user",
       Object.entries(filled)
-        .map(([field, value]) => `${FIELD_LABEL[field] ?? field}: ${value}`)
+        .map(([field, value]) => `${FIELD_LABEL[field] ?? PREFERENCE_LABELS[field] ?? field}: ${value || "не задано"}`)
         .join(" · ")
     );
     const next = await guard("answers", () => api.answer(session.id, filled));
     if (!next) return;
     setSession(next);
     setAnswers({});
+    setPreferences({});
 
     // Непонятый ответ не обрывает диалог: агент переспрашивает с примером
     // и ждёт, пока все параметры не пройдут разбор.
@@ -406,6 +408,7 @@ export function App() {
     setMessages(messages.slice(0, 1));
     setDraft("");
     setAnswers({});
+    setPreferences({});
     setReferences([]);
     setRetry(null);
     setRefreshResult(null);
@@ -462,6 +465,8 @@ export function App() {
             onSubmit={(text) => void submitRequest(text)}
             answers={answers}
             onAnswers={setAnswers}
+            preferences={preferences}
+            onPreferences={setPreferences}
             onSendAnswers={() => void sendAnswers()}
             references={references}
             onReferences={setReferences}
@@ -508,6 +513,16 @@ export function App() {
                 <Reveal>
                 <div className="card">
                   <h3>Паспорт программы</h3>
+                  {program.learning_preferences && Object.values(program.learning_preferences).some((value) => value.length > 0) && (
+                    <details className="saved-preferences">
+                      <summary>Ваши пожелания к программе</summary>
+                      <dl>
+                        {Object.entries(program.learning_preferences).filter(([, value]) => value.length > 0).map(([field, value]) => (
+                          <div key={field}><dt>{PREFERENCE_LABELS[field] ?? field}</dt><dd>{Array.isArray(value) ? value.join("; ") : value}</dd></div>
+                        ))}
+                      </dl>
+                    </details>
+                  )}
                   <dl className="program-facts">
                     <div><dt>Для кого</dt><dd>{program.meta.audience || "—"}</dd></div>
                     <div><dt>Форма обучения</dt><dd>{STUDY_FORM_LABEL[program.meta.study_form] ?? program.meta.study_form ?? "—"}</dd></div>

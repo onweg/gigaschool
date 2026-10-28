@@ -399,6 +399,14 @@ class AcrDocxBuilder:
     def assessment_block(self) -> None:
         att = self.p.final_attestation
         self.para(f"Форма итоговой аттестации: {att.form}.")
+        preferences = self.p.learning_preferences
+        if preferences.assessment_system:
+            self.para(f"Система оценивания: {preferences.assessment_system}.")
+        if preferences.assessment_threshold:
+            self.para(f"Порог и шкала оценивания: {preferences.assessment_threshold}.")
+        if preferences.learner_artifacts:
+            self.para("Результаты практической работы слушателя:", bold=True, align="left", indent=False)
+            self.bullets(preferences.learner_artifacts)
         if att.description:
             self.para(att.description)
         if att.criteria:

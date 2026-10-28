@@ -240,10 +240,10 @@ export const api = {
   parseReference: (file: File) => upload<ParsedReference>("/references/parse", file),
   health: () => call<Health>("/health"),
   skills: () => call<{ name: string; title: string; description: string }[]>("/skills"),
-  createSession: (text: string, references: string[] = []) =>
+  createSession: (text: string, references: string[] = [], answers: Record<string, string> = {}) =>
     call<SessionState>("/sessions", {
       method: "POST",
-      body: JSON.stringify({ text, references }),
+      body: JSON.stringify({ text, references, answers }),
     }),
   answer: (id: string, answers: Record<string, string>) =>
     call<SessionState>(`/sessions/${id}/answers`, {

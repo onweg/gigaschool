@@ -604,6 +604,14 @@ CHECKS = (
 def validate_program(program: Program, *, stage: str = "full") -> ValidationReport:
     """stage='skeleton' — не требует оценочных средств, они ещё не сгенерированы."""
     report = ValidationReport()
+    if program.learning_preferences.normative_requirements:
+        report.add(
+            "NORMATIVE_REQUIREMENTS_REVIEW", Severity.WARNING,
+            "Проверьте соответствие нормативным требованиям заказчика: "
+            + program.learning_preferences.normative_requirements,
+            path="learning_preferences.normative_requirements",
+            hint="Сверьте требования с нормативной базой программы. Пожелание заказчика не подтверждает действие документа.",
+        )
     for check in CHECKS:
         if stage == "skeleton" and check is check_coverage:
             check_coverage_skeleton(program, report)

@@ -19,7 +19,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import (
     ConfigError,
@@ -60,7 +60,7 @@ from app.pipeline.content import (
     generate_seminars,
     generate_tests,
 )
-from app.pipeline.intake import apply_answers, reask_text, run_intake
+from app.pipeline.intake import apply_answers, questions_for, reask_text, run_intake
 from app.pipeline.references import parse_reference
 from app.pipeline.refresh import content_from_text, find_outdated, program_content
 from app.pipeline.sources_review import pending as sources_pending, review as review_source
@@ -129,6 +129,7 @@ MAX_REFERENCE_BYTES = settings.max_reference_mb * 1024 * 1024
 class CreateSessionIn(BaseModel):
     text: str
     references: list[str] = []
+    answers: dict[str, str] = Field(default_factory=dict)
 
 
 class AnswersIn(BaseModel):
@@ -274,6 +275,7 @@ def _request_from_program(program: Program) -> ClarifyingRequest:
     """
     meta = program.meta
     return ClarifyingRequest(
+        **program.learning_preferences.model_dump(),
         title=meta.title,
         program_type=meta.program_type,
         program_type_confidence=1.0,
@@ -374,8 +376,12 @@ async def create_session(payload: CreateSessionIn, request: Request) -> dict:
         raise HTTPException(502, _model_failure(exc)) from exc
     session.usage.add(usage)
     session.request = intake.request
-    session.questions = intake.questions
-    session.stage = Stage.CLARIFYING if intake.questions else Stage.CREATED
+    failed = apply_answers(session.request, payload.answers)
+    session.questions = questions_for(session.request)
+    for field in failed:
+        if field not in {q.field for q in session.questions}:
+            session.questions.append(ClarifyingQuestion(field=field, question=reask_text(field)))
+    session.stage = Stage.CLARIFYING if session.questions else Stage.CREATED
     for note in intake.notes:
         session.log("intake", note, level="warning")
     session.log(
@@ -458,7 +464,9 @@ async def answer_questions(session_id: str, payload: AnswersIn) -> dict:
     for field in failed:
         session.log("intake", f"Ответ на «{field}» не распознан, уточните", level="warning")
     missing = session.request.missing_fields()
-    session.questions = [q for q in session.questions if q.field in missing]
+    # Заново берём недостающие: шестой вопрос не должен теряться после
+    # ответа на первую порцию из пяти.
+    session.questions = questions_for(session.request)
     # Непонятый ответ не должен останавливать диалог: вопрос задаётся заново,
     # но уже с примером допустимого ответа.
     known = {q.field for q in session.questions}

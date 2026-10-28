@@ -19,7 +19,7 @@ from app.core.hours import (
     split_exact,
 )
 from app.llm.base import LLMProvider, Usage, as_number
-from app.registry.legal import acts_for, match_prof_standards
+from app.registry.legal import acts_for, get_prof_standard, match_prof_standards
 from app.schemas.ir import (
     Competency,
     FinalAttestation,
@@ -36,6 +36,7 @@ from app.schemas.ir import (
     Topic,
 )
 from app.schemas.request import ProgramRequest
+from app.schemas.preferences import LearningPreferences
 from app.skills import load_skill
 
 ISSUED_DOCUMENT = {
@@ -180,14 +181,9 @@ async def build_skeleton(
         f"Срок реализации: {request.duration_note or '—'}",
     ]
     constraints = list(request.constraints)
-    # Темы, названные методистом прямо, — обязательная часть программы.
-    # Без этого модель пропускает их: в живых прогонах SQL и тема об этике
-    # исчезали, хотя оба были написаны в запросе буквально.
-    if request.must_cover:
-        constraints.append(
-            'обязательно раскрыть темы, названные методистом: '
-            + '; '.join(request.must_cover)
-        )
+    preferences = LearningPreferences.model_validate(request.model_dump())
+    if preferences.instructions():
+        constraints.append(preferences.instructions())
     if request.min_practice_share:
         constraints.append(
             f"доля практики не менее {int(request.min_practice_share * 100)}% часов"
@@ -248,7 +244,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         attestation_hours = round(attestation_hours + leftover, 1)
 
     meta = ProgramMeta(
-        title=(data.get("title") or request.title or request.direction or "Программа"),
+        title=(request.title or data.get("title") or request.direction or "Программа"),
         program_type=program_type,
         total_hours=total,
         direction=request.direction,
@@ -273,8 +269,14 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
     competencies: list[Competency] = []
     if program_type is ProgramType.DPP_PK:
         standards = match_prof_standards(
-            " ".join([request.direction, request.raw_text, meta.title])
+            " ".join([request.direction, request.raw_text, meta.title, request.normative_requirements])
         )
+        named_standards = [
+            standard for code in dict.fromkeys(re.findall(r"\b\d{2}\.\d{3}\b", request.normative_requirements))
+            if (standard := get_prof_standard(code)) is not None
+        ]
+        if named_standards:
+            standards = named_standards
         for i, c in enumerate(as_dicts(data.get("competencies"))):
             std = standards[0] if standards else None
             competencies.append(
@@ -354,6 +356,7 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
 
     program = Program(
         meta=meta,
+        learning_preferences=LearningPreferences.model_validate(request.model_dump()),
         annotation=str(data.get("annotation", "") or "").strip(),
         relevance=str(data.get("relevance", "") or "").strip(),
         goal=str(data.get("goal", "") or "").strip(),
@@ -365,12 +368,16 @@ def assemble_program(request: ProgramRequest, data: dict) -> Program:
         modules=modules,
         final_attestation=FinalAttestation(
             hours=attestation_hours,
-            form=str(attestation_raw.get("form") or request.attestation_form or ""),
+            form=str(request.attestation_form or attestation_raw.get("form") or ""),
             description=str(attestation_raw.get("description", "") or ""),
             criteria=[str(x) for x in attestation_raw.get("criteria") or []],
         ),
         schedule=_schedule_for(request, total),
-        entry_requirements=str(data.get("entry_requirements", "") or request.entry_level),
+        entry_requirements=(
+            "; ".join(filter(None, [request.education_requirements, request.entry_level]))
+            if request.education_requirements
+            else str(data.get("entry_requirements", "") or request.entry_level)
+        ),
         sources=[
             Source(
                 id=f"S-{i + 1}",

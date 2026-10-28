@@ -23,6 +23,16 @@ const ANSWER_OPTIONS: Record<string, AnswerOption[]> = {
   attestation_form: ["Экзамен", "Зачёт", "Защита проекта", "Собеседование"].map(
     (value) => ({ label: value, value })
   ),
+  education_requirements: ["Высшее образование", "Среднее профессиональное образование"].map(
+    (value) => ({ label: value, value })
+  ),
+  uses_dot: [{ label: "С ЭО/ДОТ", value: "Да" }, { label: "Без ЭО/ДОТ", value: "Нет" }],
+  assessment_system: ["Зачтено / не зачтено", "Балльная система"].map(
+    (value) => ({ label: value, value })
+  ),
+  learner_artifacts: ["Проект", "Прототип", "Портфолио"].map(
+    (value) => ({ label: value, value })
+  ),
 };
 
 const PLACEHOLDERS: Record<string, string> = {
@@ -32,12 +42,21 @@ const PLACEHOLDERS: Record<string, string> = {
   entry_level: "Например: знают Excel, с Python не работали",
   study_form: "Выберите форму или напишите свой ответ",
   attestation_form: "Например: защита проекта и итоговый тест",
+  title: "Если есть точное название для обложки",
+  education_requirements: "Укажите только необходимые ограничения",
+  desired_outcomes: "Например: анализировать данные и готовить отчёты",
+  must_cover: "Например: Python, pandas, SQL",
+  normative_requirements: "Название, код или реквизиты документа. Можно приложить файл к запросу",
+  uses_dot: "Да или нет",
+  assessment_system: "Выберите систему или опишите свою",
+  assessment_threshold: "Например: не менее 70 из 100 баллов",
+  learner_artifacts: "Например: прототип сервиса и портфолио работ",
 };
 
 const normalize = (value: string) => value.trim().toLocaleLowerCase("ru");
 
 export function QuestionAnswer({
-  field, question, value, onChange, onSubmit, disabled,
+  field, question, value, onChange, onSubmit, disabled, multiline = false,
 }: {
   field: string;
   question: string;
@@ -45,6 +64,7 @@ export function QuestionAnswer({
   onChange: (value: string) => void;
   onSubmit: () => void;
   disabled: boolean;
+  multiline?: boolean;
 }) {
   const options = ANSWER_OPTIONS[field] ?? [];
   const labelId = `answer-label-${field}`;
@@ -67,7 +87,16 @@ export function QuestionAnswer({
           ))}
         </div>
       )}
-      <input
+      {multiline ? (
+        <textarea
+          id={`answer-${field}`}
+          aria-labelledby={labelId}
+          rows={3}
+          value={value}
+          placeholder={PLACEHOLDERS[field] ?? "Напишите свой ответ"}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : <input
         type="text"
         inputMode={field === "total_hours" ? "decimal" : "text"}
         id={`answer-${field}`}
@@ -81,7 +110,7 @@ export function QuestionAnswer({
             onSubmit();
           }
         }}
-      />
+      />}
     </fieldset>
   );
 }

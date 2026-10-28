@@ -4,6 +4,7 @@ import type { ParsedReference } from "../lib/api";
 import type { SessionState } from "../lib/types";
 import { References } from "./References";
 import { QuestionAnswer } from "./QuestionAnswer";
+import { RequestPreferences } from "./RequestPreferences";
 import { Icon, type IconName } from "./Icon";
 import type { SectionKey } from "./Sidebar";
 import { formatDuration, StatusLine, type MarkKind } from "./Motion";
@@ -60,7 +61,7 @@ const EXAMPLES: { icon: IconName; title: string; detail: string; text: string }[
 
 /** Единая лента: диалог, интерактивная программа и действия над ней. */
 export function ChatWorkspace({
-  session, messages, draft, onDraft, onSubmit, answers, onAnswers, onSendAnswers,
+  session, messages, draft, onDraft, onSubmit, answers, onAnswers, onSendAnswers, preferences, onPreferences,
   references, onReferences, onApprove, exports, exportUrl, busy, working, retry,
   children, section, navigationVersion, onSelect,
 }: {
@@ -71,6 +72,8 @@ export function ChatWorkspace({
   onSubmit: (text: string) => void;
   answers: Record<string, string>;
   onAnswers: (next: Record<string, string>) => void;
+  preferences: Record<string, string>;
+  onPreferences: (next: Record<string, string>) => void;
   onSendAnswers: () => void;
   references: ParsedReference[];
   onReferences: (next: ParsedReference[]) => void;
@@ -180,6 +183,7 @@ export function ChatWorkspace({
                   </button>
                 ))}
               </div>
+              <RequestPreferences values={preferences} onChange={onPreferences} disabled={working} />
             </div>
           ) : (
             <>
@@ -205,7 +209,7 @@ export function ChatWorkspace({
                       <div className="q-title">Уточнения перед сборкой</div>
                       <p>Выберите вариант или напишите свой ответ. Выбранный вариант можно дополнить и изменить.</p>
                     </div>
-                    {session.questions.map((question) => (
+                    {session.questions.slice(0, 3).map((question) => (
                       <QuestionAnswer
                         key={question.field}
                         field={question.field}
@@ -216,9 +220,15 @@ export function ChatWorkspace({
                         disabled={working}
                       />
                     ))}
+                    <RequestPreferences values={preferences} request={session.request} onChange={onPreferences} disabled={working} />
+                    {Boolean(session.request.program_type) && (
+                      <div className="issued-document-note">
+                        По итогам: {session.request.program_type === "dpp_pk" ? "удостоверение о повышении квалификации" : "сертификат"}.
+                      </div>
+                    )}
                     <button
                       className="btn primary"
-                      disabled={working || !session.questions.some((question) => answers[question.field]?.trim())}
+                      disabled={working || (!session.questions.some((question) => answers[question.field]?.trim()) && !Object.keys(preferences).length)}
                       onClick={onSendAnswers}
                     >
                       {busy === "answers" ? "Отправляю…" : "Ответить"}

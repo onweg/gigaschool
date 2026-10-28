@@ -29,6 +29,7 @@ export type Module = {
 export type Outcome = { id: string; kind: string; text: string };
 
 export type Program = {
+  learning_preferences?: Record<string, string | string[]>;
   meta: {
     title: string;
     program_type: "dpp_pk" | "dop_obsh";

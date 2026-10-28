@@ -25,13 +25,31 @@ QUESTION_TEXT: dict[str, str] = {
         "или общеразвивающая программа?"
     ),
     "total_hours": "Какой объём программы в академических часах?",
-    "audience": "Кто слушатели: должность, уровень образования, организация?",
+    "audience": "Кто будет учиться: должности или сфера деятельности?",
     "entry_level": "Какой у слушателей входной уровень подготовки?",
     "study_form": "Форма обучения: очная, очно-заочная или заочная?",
     "attestation_form": (
         "В какой форме проходит итоговая аттестация: экзамен, зачёт, защита проекта?"
     ),
 }
+
+OPTIONAL_TEXT_FIELDS = (
+    "education_requirements", "normative_requirements", "assessment_system", "assessment_threshold",
+)
+OPTIONAL_LIST_FIELDS = ("desired_outcomes", "learner_artifacts")
+
+
+def questions_for(request: ProgramRequest) -> list[ClarifyingQuestion]:
+    """Только недостающие основные параметры; дополнительные не блокируют сборку."""
+    return [ClarifyingQuestion(field=f, question=QUESTION_TEXT[f])
+            for f in request.missing_fields() if f in QUESTION_TEXT][:MAX_QUESTIONS]
+
+
+def _items(value: str, *, commas: bool = False) -> list[str]:
+    return list(dict.fromkeys(
+        item.strip().lstrip("• ") for item in re.split(r"[\n;,]" if commas else r"[\n;]", value)
+        if item.strip().lstrip("• ")
+    ))
 
 _WEEKS = re.compile(r"(\d+)\s*недел", re.IGNORECASE)
 _DAYS = re.compile(r"(\d+)\s*(?:дн|день|дней)", re.IGNORECASE)
@@ -131,6 +149,8 @@ def fill_from_text(request: ProgramRequest, text: str) -> None:
     сам, переспрашивать не нужно. Чего в тексте нет — останется пустым, и
     агент спросит. Значение модели, если оно есть, не трогаем.
     """
+    if m := re.search(r"(?:программ\w*|курс\w*)\s*«([^»]+)»", text, re.I):
+        request.title = m.group(1).strip()
     if not request.audience and (m := _AUDIENCE.search(text)):
         request.audience = m.group(1).strip()
     if not request.entry_level and (m := _ENTRY.search(text)):
@@ -263,6 +283,21 @@ async def run_intake(
     ]
     request.deliverables = [str(d) for d in data.get("deliverables") or []]
 
+    # Не превращаем выдуманное пожелание модели в требование заказчика.
+    # Новые поля извлекаются дословно; отсутствие не порождает новых вопросов.
+    evidence = " ".join([request_text, *(references or [])]).casefold()
+    for field in OPTIONAL_TEXT_FIELDS:
+        value = data.get(field)
+        if isinstance(value, str) and value.strip() and value.strip().casefold() in evidence:
+            setattr(request, field, value.strip())
+    for field in OPTIONAL_LIST_FIELDS:
+        values = data.get(field)
+        if isinstance(values, list):
+            setattr(request, field, list(dict.fromkeys(
+                v.strip() for v in values
+                if isinstance(v, str) and v.strip() and v.strip().casefold() in evidence
+            )))
+
     dropped = drop_ungrounded(request, " ".join([request_text, *(references or [])]))
     fill_from_text(request, request_text)
 
@@ -277,11 +312,7 @@ async def run_intake(
 
     # Вопросы формируем сами по списку недостающих полей: так гарантируется
     # и лимит, и формулировки, понятные методисту.
-    questions = [
-        ClarifyingQuestion(field=f, question=QUESTION_TEXT[f])
-        for f in request.missing_fields()
-        if f in QUESTION_TEXT
-    ][:MAX_QUESTIONS]
+    questions = questions_for(request)
 
     notes: list[str] = []
     if dropped:
@@ -302,10 +333,23 @@ def apply_answers(request: ProgramRequest, answers: dict[str, str]) -> list[str]
     failed: list[str] = []
     for field, value in answers.items():
         value = (value or "").strip()
+        if field in (*OPTIONAL_TEXT_FIELDS, "title"):
+            setattr(request, field, value or (None if field == "title" else ""))
+            continue
+        if field in (*OPTIONAL_LIST_FIELDS, "must_cover"):
+            setattr(request, field, _items(value, commas=field == "must_cover"))
+            continue
         if not value:
             continue
         low = value.lower()
-        if field == "program_type":
+        if field == "uses_dot":
+            if low in ("да", "true", "1", "с эо/дот"):
+                request.uses_dot = True
+            elif low in ("нет", "false", "0", "без эо/дот"):
+                request.uses_dot = False
+            else:
+                failed.append(field)
+        elif field == "program_type":
             if "общеразв" in low or "школьн" in low or "dop" in low:
                 request.program_type = ProgramType.DOP_OBSH
             elif "повыш" in low or "квалиф" in low or "pk" in low:
@@ -343,6 +387,7 @@ def apply_answers(request: ProgramRequest, answers: dict[str, str]) -> list[str]
 #: Примеры допустимых ответов. Переспрашивать «тем же вопросом» бесполезно:
 #: методист уже ответил как умел, значит нужен образец формата.
 REASK_HINTS: dict[str, str] = {
+    "uses_dot": "Использовать электронное обучение и дистанционные технологии? Выберите «Да» или «Нет».",
     "program_type": (
         "Не понял тип программы. Напишите одним из вариантов: "
         "«повышение квалификации» или «общеразвивающая»."

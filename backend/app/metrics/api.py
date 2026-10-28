@@ -58,6 +58,11 @@ def _percentiles(values: list[float]) -> dict[str, float]:
     return {"p50": at(0.5), "p90": at(0.9), "max": round(ordered[-1], 2)}
 
 
+def _cost_sql():
+    settings = get_settings()
+    return f"COALESCE(cost_rub, prompt_tokens * {settings.price_prompt_per_1k / 1000} + completion_tokens * {settings.price_completion_per_1k / 1000})"
+
+
 @router.get("/overview")
 async def overview(days: int | None = None) -> dict[str, Any]:
     """Сводка: воронка, время фаз, качество, деньги. days=None — за всё время."""
@@ -104,9 +109,9 @@ async def overview(days: int | None = None) -> dict[str, Any]:
     money = db.one(
         f"""SELECT COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
                    COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-                   COALESCE(SUM(cost_rub),0) AS cost_rub,
-                   COALESCE(SUM(llm_calls),0) AS llm_calls
-            FROM runs {f"WHERE finished_at >= datetime('now', '-{int(days)} days')" if days else ""}"""
+                   COALESCE(SUM({_cost_sql()}),0) AS cost_rub,
+                   COUNT(*) AS llm_calls
+            FROM llm_calls {f"WHERE ts >= datetime('now', '-{int(days)} days')" if days else ""}"""
     )
     calls = db.one(
         f"""SELECT COUNT(*) AS n,
@@ -181,8 +186,8 @@ async def timeseries(days: int = 30) -> dict[str, Any]:
     cost = {
         r["day"]: r["cost"]
         for r in db.query(
-            """SELECT date(finished_at) AS day, SUM(cost_rub) AS cost
-               FROM runs WHERE finished_at >= datetime('now', ?) GROUP BY day""",
+            f"""SELECT date(ts) AS day, SUM({_cost_sql()}) AS cost
+               FROM llm_calls WHERE ts >= datetime('now', ?) GROUP BY day""",
             (f"-{int(days)} days",),
         )
     }
@@ -237,14 +242,14 @@ async def recent_sessions(limit: int = 50) -> dict[str, Any]:
     """Журнал сессий для отладки: что просили, чем кончилось, сколько стоило."""
     return {
         "sessions": db.query(
-            """SELECT s.id, s.created_at, s.device_id, s.program_type, s.total_hours,
+            f"""SELECT s.id, s.created_at, s.device_id, s.program_type, s.total_hours,
                       s.questions_asked, s.has_references, s.provider, s.model,
                       s.request_text,
                       (SELECT stage FROM stage_events e WHERE e.session_id = s.id
                         ORDER BY e.id DESC LIMIT 1) AS last_stage,
                       (SELECT COUNT(*) FROM llm_calls c WHERE c.session_id = s.id) AS calls,
                       (SELECT ROUND(SUM(duration_s),1) FROM runs r WHERE r.session_id = s.id) AS seconds,
-                      (SELECT ROUND(SUM(cost_rub),2) FROM runs r WHERE r.session_id = s.id) AS cost_rub,
+                      (SELECT ROUND(SUM({_cost_sql()}),2) FROM llm_calls c WHERE c.session_id = s.id) AS cost_rub,
                       (SELECT COUNT(*) FROM findings f
                         WHERE f.session_id = s.id AND f.severity='error') AS errors,
                       (SELECT COUNT(*) FROM exports x WHERE x.session_id = s.id) AS exports

@@ -93,6 +93,7 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int = 4000,
         json_mode: bool = False,
     ) -> Completion:
+        reasoning = self.model == "ai-sage/GigaChat3.5-432B-A28B-Reasoning"
         payload: dict = {
             "model": self.model,
             "messages": [
@@ -100,7 +101,7 @@ class OpenAICompatProvider(LLMProvider):
                 {"role": "user", "content": user},
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens + 8192 if reasoning else max_tokens,
         }
         if json_mode and self.supports_json_mode:
             payload["response_format"] = {"type": "json_object"}
@@ -116,6 +117,9 @@ class OpenAICompatProvider(LLMProvider):
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise LLMError(f"{self.name}: неожиданный формат ответа: {data}") from exc
+        if not isinstance(text, str) or not text.strip():
+            raise LLMError(f"{self.name}: модель {self.model} не вернула итоговый текст. "
+                           "Возможно, лимит ответа потрачен на рассуждения. Повторите запрос или выберите GigaChat 3 Pro.")
         raw_usage = data.get("usage") or {}
         return Completion(
             text=text,
@@ -139,7 +143,8 @@ class OpenAICompatProvider(LLMProvider):
         # три минуты — это видно за секунды; а ответ на длинный промпт модель
         # законно пишет долго, его ждём полный срок.
         timeout = httpx.Timeout(
-            connect=CONNECT_TIMEOUT, read=self.timeout, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT
+            connect=CONNECT_TIMEOUT, read=max(self.timeout, 300) if self.model.endswith('-Reasoning') else self.timeout,
+            write=WRITE_TIMEOUT, pool=POOL_TIMEOUT
         )
         for attempt in range(self.max_retries):
             after = None

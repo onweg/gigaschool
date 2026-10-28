@@ -145,6 +145,8 @@ def connect() -> sqlite3.Connection:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(SCHEMA)
+            if 'cost_rub' not in {r[1] for r in conn.execute('PRAGMA table_info(llm_calls)')}:
+                conn.execute('ALTER TABLE llm_calls ADD COLUMN cost_rub REAL')
             conn.commit()
             _CONN = conn
     return _CONN

@@ -23,8 +23,14 @@ current_session: ContextVar[str] = ContextVar("current_session", default="")
 class MeteredProvider(LLMProvider):
     def __init__(self, inner: LLMProvider) -> None:
         self._inner = inner
-        self.name = inner.name
-        self.model = inner.model
+
+    @property
+    def name(self):
+        return self._inner.name
+
+    @property
+    def model(self):
+        return self._inner.model
 
     async def complete(
         self,
@@ -38,6 +44,7 @@ class MeteredProvider(LLMProvider):
         match = _SKILL.search(system)
         skill = match.group(1) if match else "unknown"
         started = time.perf_counter()
+        model = self.model
         try:
             result = await self._inner.complete(
                 system=system,
@@ -57,6 +64,8 @@ class MeteredProvider(LLMProvider):
                 error=f"{type(exc).__name__}: {exc}",
             )
             raise
+        from app.llm.models import token_cost
+        result.usage.cost_rub = token_cost(model, result.usage.prompt_tokens, result.usage.completion_tokens)
         record.llm_call(
             session_id=current_session.get(),
             skill=skill,
@@ -66,5 +75,6 @@ class MeteredProvider(LLMProvider):
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             ok=True,
+            cost_rub=result.usage.cost_rub,
         )
         return result

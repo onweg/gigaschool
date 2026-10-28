@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatWorkspace, type Message } from "./components/ChatWorkspace";
 import { ReviewWorkspace } from "./components/ReviewWorkspace";
+import { ModelPicker } from "./components/ModelPicker";
 import { Icon } from "./components/Icon";
 import { PREFERENCE_LABELS } from "./components/RequestPreferences";
 import { HoursTable } from "./components/HoursTable";
@@ -11,7 +12,7 @@ import { Report } from "./components/Report";
 import { SourceCheck } from "./components/SourceCheck";
 import { Sidebar, type SectionKey } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
-import { type AdaptChanges, ApiError, type Health, type ParsedReference, type RefreshResult, api, metricsToken } from "./lib/api";
+import { type AdaptChanges, ApiError, type Health, type ParsedReference, type RefreshResult, type ModelCatalog, api, metricsToken } from "./lib/api";
 import type { SessionState } from "./lib/types";
 
 /** Сколько неудачных опросов подряд терпим, прежде чем сказать о потере связи. */
@@ -44,6 +45,19 @@ export function App() {
   const restoreVersion = useRef(0);
   const activeSession = useRef<string | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [models, setModels] = useState<ModelCatalog | null>(null);
+  const [modelError, setModelError] = useState("");
+  const [draftModel, setDraftModel] = useState("");
+  async function loadModels() {
+    try {
+      const catalog = await api.models();
+      setModels(catalog); setModelError("");
+      let saved = "";
+      try { saved = localStorage.getItem("acr.model") || ""; } catch { /* private mode */ }
+      setDraftModel(current => current || (catalog.models.some(m => m.id === saved) ? saved : catalog.default_id));
+    } catch (e) { setModelError(e instanceof ApiError ? e.full : "Не удалось загрузить модели"); }
+  }
+  useEffect(() => { void loadModels(); }, []);
   const [health, setHealth] = useState<Health | null>(null);
   // Почему агент недоступен — показываем причину, а не просто красную точку.
   const [healthError, setHealthError] = useState<ApiError | null>(null);
@@ -248,7 +262,7 @@ export function App() {
     say("user", text);
     setDraft("");
     const next = await guard("create", () =>
-      api.createSession(text, references.map((ref) => ref.text), preferences)
+      api.createSession(text, references.map((ref) => ref.text), preferences, draftModel || undefined)
     );
     if (!next) return;
     setSession(next);
@@ -432,6 +446,18 @@ export function App() {
     }
   }
 
+  async function chooseModel(modelId: string) {
+    setBusy("model");
+    try {
+      if (session) {
+        const next = await api.setModel(session.id, modelId);
+        setSession(next);
+      }
+      setDraftModel(modelId);
+      try { localStorage.setItem("acr.model", modelId); } catch { /* private mode */ }
+    } finally { setBusy(null); }
+  }
+
   function reset() {
     restoreVersion.current += 1;
     activeSession.current = null;
@@ -464,7 +490,7 @@ export function App() {
       <main className="main">
         <header className="workspace-header">
           <div className="workspace-title">
-            <span className="workspace-label">Мастерская программ</span>
+            <ModelPicker catalog={models} value={session?.model_id || draftModel || models?.default_id || ""} disabled={working || busyTopic !== null} onChange={chooseModel} loadError={modelError} onRetry={() => void loadModels()} />
             <span className="workspace-divider">/</span>
             <span className="workspace-name">{section === "stats" ? "Статистика" : program?.meta.title || "Новая программа"}</span>
           </div>

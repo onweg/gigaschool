@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -47,6 +48,7 @@ except ConfigError as exc:
     _refuse_to_start(exc)
 
 from app.llm.base import LLMError, redact  # noqa: E402
+from app.llm.models import ModelRouter, selected_model
 from app.llm.metered import MeteredProvider, current_session  # noqa: E402
 from app.metrics import db, record
 from app.metrics.api import router as metrics_router
@@ -110,7 +112,40 @@ if _base_provider.name.startswith("mock"):
 print("", file=sys.stderr)
 
 #: Метрики снимаются обёрткой вокруг провайдера: пайплайн о них не знает.
-provider = MeteredProvider(_base_provider)
+model_router = ModelRouter(_base_provider)
+provider = MeteredProvider(model_router)
+_model_jobs: dict[str, int] = {}
+
+
+@app.middleware("http")
+async def bind_request_model(request: Request, call_next):
+    match = re.match(r"^/api/sessions/([0-9a-f]{12})(?:/|$)", request.url.path)
+    session_id = match.group(1) if match else ""
+    session = store.get(session_id) if session_id else None
+    token = selected_model.set(session.model_id if session else "")
+    job = bool(session_id and request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.endswith("/model"))
+    if job:
+        _model_jobs[session_id] = _model_jobs.get(session_id, 0) + 1
+    try:
+        return await call_next(request)
+    finally:
+        selected_model.reset(token)
+        if job:
+            _model_jobs[session_id] -= 1
+            if not _model_jobs[session_id]:
+                del _model_jobs[session_id]
+
+
+def _bind_model(session: Session, model_id: str | None = None):
+    try:
+        chosen = model_router.resolve(model_id or session.model_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    if session.model_id and session.model_id != chosen and (_model_jobs.get(session.id) or session.phase or session.stage == Stage.CONTENT or store.lock(session.id).locked()):
+        raise HTTPException(409, "дождитесь завершения текущей операции перед сменой модели")
+    session.model_id = chosen
+    selected_model.set(chosen)
+
 app.include_router(metrics_router)
 
 
@@ -127,6 +162,7 @@ MAX_REFERENCE_BYTES = settings.max_reference_mb * 1024 * 1024
 # Модели запросов
 # --------------------------------------------------------------------------- #
 class CreateSessionIn(BaseModel):
+    model_id: str | None = None
     text: str
     references: list[str] = []
     answers: dict[str, str] = Field(default_factory=dict)
@@ -150,6 +186,7 @@ class GenerateIn(BaseModel):
 
     text: str = ""
     session_id: str | None = None
+    model_id: str | None = None
     answers: dict[str, str] = {}
     references: list[str] = []
     test_total: int | None = None
@@ -222,10 +259,10 @@ def _session_or_404(session_id: str) -> Session:
     return session
 
 
-def _usage_snapshot(session: Session) -> tuple[int, tuple[int, int]]:
+def _usage_snapshot(session: Session) -> tuple[int, tuple[int, int, float]]:
     """Счётчики до фазы: разница даст расход именно этой фазы."""
     u = session.usage
-    return u.calls, (u.prompt_tokens, u.completion_tokens)
+    return u.calls, (u.prompt_tokens, u.completion_tokens, u.cost_rub(rounded=False))
 
 
 def _record_run(
@@ -235,13 +272,12 @@ def _record_run(
     duration_s: float,
     ok: bool,
     calls_before: int,
-    tokens_before: tuple[int, int],
+    tokens_before: tuple[int, int, float],
     error: str = "",
 ) -> None:
     u = session.usage
     prompt = u.prompt_tokens - tokens_before[0]
     completion = u.completion_tokens - tokens_before[1]
-    s = get_settings()
     # usage.calls считает агрегированные добавления, а не обращения к модели,
     # поэтому реальное число вызовов берём из журнала за время фазы.
     counted = db.one(
@@ -259,8 +295,7 @@ def _record_run(
         llm_calls=counted,
         prompt_tokens=prompt,
         completion_tokens=completion,
-        cost_rub=prompt / 1000 * s.price_prompt_per_1k
-        + completion / 1000 * s.price_completion_per_1k,
+        cost_rub=u.cost_rub(rounded=False) - tokens_before[2],
         provider=provider.name,
         model=provider.model,
     )
@@ -293,6 +328,7 @@ def _request_from_program(program: Program) -> ClarifyingRequest:
 def _state(session: Session) -> dict[str, Any]:
     return {
         "id": session.id,
+        "model_id": session.model_id or model_router.default,
         "stage": session.stage.value,
         "request": session.request.model_dump(mode="json"),
         "missing": session.request.missing_fields(),
@@ -347,6 +383,30 @@ async def health() -> dict:
     }
 
 
+@app.get("/api/models")
+async def model_catalog() -> dict:
+    return {"models": list(model_router.options.values()), "default_id": model_router.default,
+            "offline_stub": model_router.offline}
+
+
+class ModelChoiceIn(BaseModel):
+    model_id: str
+
+
+@app.post("/api/sessions/{session_id}/model")
+async def choose_session_model(session_id: str, payload: ModelChoiceIn) -> dict:
+    session = _session_or_404(session_id)
+    if _model_jobs.get(session_id) or session.phase or session.stage == Stage.CONTENT or store.lock(session_id).locked():
+        raise HTTPException(409, "дождитесь завершения текущей операции перед сменой модели")
+    previous = session.model_id or model_router.default
+    _bind_model(session, payload.model_id)
+    if previous != session.model_id:
+        session.log("model", f"Модель для следующих операций: {session.model_id}. Готовые материалы сохранены.")
+        record.action(session_id=session.id, device_id=session.device_id, kind="model_selected", model=session.model_id)
+    store.save(session)
+    return _state(session)
+
+
 @app.get("/api/skills")
 async def skills() -> list[dict]:
     """Состав навыков агента — для переноса логики в GigaCowork и для защиты."""
@@ -362,6 +422,7 @@ async def skills() -> list[dict]:
 @app.post("/api/sessions")
 async def create_session(payload: CreateSessionIn, request: Request) -> dict:
     session = store.create()
+    _bind_model(session, payload.model_id)
     session.device_id = _device(request)
     current_session.set(session.id)
     session.references = payload.references
@@ -647,6 +708,7 @@ async def approve_skeleton(session_id: str) -> dict:
 # Шаг 3: содержание
 # --------------------------------------------------------------------------- #
 async def _run_content(session: Session, payload: ContentIn) -> None:
+    selected_model.set(session.model_id or model_router.default)
     program = session.program
     assert program is not None
     current_session.set(session.id)
@@ -1006,6 +1068,7 @@ async def adapt(session_id: str, payload: AdaptIn, request: Request) -> dict:
         raise HTTPException(400, "не указано, что менять: аудитория, объём, тип или форма")
 
     target = store.create()
+    _bind_model(target, source.model_id)
     target.device_id = _device(request)
     current_session.set(target.id)
     target.references = source.references
@@ -1074,6 +1137,7 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
     """
     if payload.session_id:
         session = _session_or_404(payload.session_id)
+        _bind_model(session, payload.model_id)
         if payload.answers:
             unparsed = apply_answers(session.request, payload.answers)
             if unparsed:
@@ -1087,6 +1151,7 @@ async def generate(payload: GenerateIn, request: Request) -> dict:
                 }
     elif payload.text.strip():
         session = store.create()
+        _bind_model(session, payload.model_id)
         session.device_id = _device(request)
         current_session.set(session.id)
         session.references = payload.references

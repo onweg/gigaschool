@@ -82,15 +82,16 @@ def llm_call(
     ok: bool = True,
     error: str = "",
     json_retries: int = 0,
+    cost_rub: float = 0.0,
 ) -> None:
     db.write(
         """INSERT INTO llm_calls
            (ts, session_id, skill, provider, model, latency_ms, prompt_tokens,
-            completion_tokens, ok, error, json_retries)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            completion_tokens, ok, error, json_retries, cost_rub)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             db.now(), session_id, skill, provider, model, latency_ms,
-            prompt_tokens, completion_tokens, int(ok), error[:500], json_retries,
+            prompt_tokens, completion_tokens, int(ok), error[:500], json_retries, cost_rub,
         ),
     )
 

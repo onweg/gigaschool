@@ -168,6 +168,12 @@ export type PendingSource = {
   check_url: string;
 };
 
+export type ModelCatalog = {
+  models: { id: string; name: string; description: string; reasoning: boolean; input_per_million: number | null; output_per_million: number | null }[];
+  default_id: string;
+  offline_stub: boolean;
+};
+
 export type Health = {
   status: string;
   llm_provider: string;
@@ -238,6 +244,8 @@ export const metrics = {
 };
 
 export const api = {
+  models: () => call<ModelCatalog>("/models"),
+  setModel: (id: string, model_id: string) => call<SessionState>(`/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model_id }) }),
   review: (id: string) => call<ReviewData>(`/sessions/${id}/review`),
   scanReview: (id: string, topic_id: string) => call<ReviewData>(`/sessions/${id}/review/scan`, {
     method: "POST", body: JSON.stringify({ topic_id }),
@@ -264,10 +272,10 @@ export const api = {
   parseReference: (file: File) => upload<ParsedReference>("/references/parse", file),
   health: () => call<Health>("/health"),
   skills: () => call<{ name: string; title: string; description: string }[]>("/skills"),
-  createSession: (text: string, references: string[] = [], answers: Record<string, string> = {}) =>
+  createSession: (text: string, references: string[] = [], answers: Record<string, string> = {}, model_id?: string) =>
     call<SessionState>("/sessions", {
       method: "POST",
-      body: JSON.stringify({ text, references, answers }),
+      body: JSON.stringify({ text, references, answers, model_id }),
     }),
   answer: (id: string, answers: Record<string, string>) =>
     call<SessionState>(`/sessions/${id}/answers`, {

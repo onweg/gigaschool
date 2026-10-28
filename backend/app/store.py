@@ -47,8 +47,12 @@ class UsageRecord(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     calls: int = 0
+    accounted_cost: float | None = None
 
     def add(self, usage: Usage) -> None:
+        if self.accounted_cost is not None or usage.cost_rub is not None:
+            from app.llm.models import token_cost
+            self.accounted_cost = self.cost_rub(rounded=False) + (usage.cost_rub if usage.cost_rub is not None else token_cost('', usage.prompt_tokens, usage.completion_tokens))
         self.prompt_tokens += usage.prompt_tokens
         self.completion_tokens += usage.completion_tokens
         self.calls += 1
@@ -57,13 +61,12 @@ class UsageRecord(BaseModel):
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
-    def cost_rub(self) -> float:
+    def cost_rub(self, *, rounded: bool = True) -> float:
         s = get_settings()
-        return round(
-            self.prompt_tokens / 1000 * s.price_prompt_per_1k
-            + self.completion_tokens / 1000 * s.price_completion_per_1k,
-            2,
-        )
+        if self.accounted_cost is not None:
+            return round(self.accounted_cost, 2) if rounded else self.accounted_cost
+        cost = (self.prompt_tokens * s.price_prompt_per_1k + self.completion_tokens * s.price_completion_per_1k) / 1000
+        return round(cost, 2) if rounded else cost
 
 
 #: Сколько реплик держим в сессии: файл на диске не должен пухнуть,
@@ -88,6 +91,7 @@ class Session(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     stage: Stage = Stage.CREATED
+    model_id: str = ""
     request: ProgramRequest = Field(default_factory=ProgramRequest)
     questions: list[ClarifyingQuestion] = Field(default_factory=list)
     program: Program | None = None

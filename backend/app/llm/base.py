@@ -17,12 +17,16 @@ from dataclasses import dataclass, field
 class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cost_rub: float | None = None
 
     @property
     def total(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
     def __iadd__(self, other: "Usage") -> "Usage":
+        if self.cost_rub is not None or other.cost_rub is not None:
+            from app.llm.models import token_cost
+            self.cost_rub = (self.cost_rub if self.cost_rub is not None else token_cost('', self.prompt_tokens, self.completion_tokens)) + (other.cost_rub if other.cost_rub is not None else token_cost('', other.prompt_tokens, other.completion_tokens))
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         return self

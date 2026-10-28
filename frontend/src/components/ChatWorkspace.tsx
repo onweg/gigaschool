@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ParsedReference } from "../lib/api";
 import type { SessionState } from "../lib/types";
 import { References } from "./References";
+import { QuestionAnswer } from "./QuestionAnswer";
 import { Icon, type IconName } from "./Icon";
 import type { SectionKey } from "./Sidebar";
 import { formatDuration, StatusLine, type MarkKind } from "./Motion";
@@ -50,16 +51,6 @@ const STAGE_MARK: Record<string, MarkKind> = {
   ready: "check",
   skeleton: "plan",
 };
-
-const FIELD_LABEL: Record<string, string> = {
-  program_type: "Тип программы",
-  total_hours: "Объём, часов",
-  audience: "Аудитория",
-  entry_level: "Входной уровень",
-  study_form: "Форма обучения",
-  attestation_form: "Итоговая аттестация",
-};
-
 
 const EXAMPLES: { icon: IconName; title: string; detail: string; text: string }[] = [
   { icon: "plan", title: "Анализ данных на Python", detail: "72 часа · сотрудники банков", text: "Программа повышения квалификации по анализу данных на Python на 72 часа для сотрудников банков, начинающих изучать Python. Очно-заочно, итоговая аттестация — защита проекта." },
@@ -173,9 +164,7 @@ export function ChatWorkspace({
           {welcome ? (
             <div className="welcome">
               <div className="welcome-mark"><Icon name="spark" size={34} /></div>
-              <div className="eyebrow">ВЫ — ЭКСПЕРТ. АГЕНТ — ВАШ МЕТОДИСТ.</div>
-              <h1>От идеи до <span>программы.</span></h1>
-              <p className="welcome-lede">Расскажите, чему хотите научить.<br />Вместе соберём программу, в которой всё на своём месте.</p>
+              <h1>Создайте образовательную<br />программу <span>с помощью ИИ</span></h1>
               <div className="welcome-features">
                 <span><Icon name="program" size={15} />Шаблоны АЦР</span>
                 <span><Icon name="report" size={15} />Проверка часов и компетенций</span>
@@ -212,27 +201,24 @@ export function ChatWorkspace({
                     exit={{ opacity: 0, y: -8 }}
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    <div className="q-title">Уточнения перед сборкой</div>
+                    <div className="q-heading">
+                      <div className="q-title">Уточнения перед сборкой</div>
+                      <p>Выберите вариант или напишите свой ответ. Выбранный вариант можно дополнить и изменить.</p>
+                    </div>
                     {session.questions.map((question) => (
-                      <div key={question.field}>
-                        <label htmlFor={`answer-${question.field}`}>{question.question}</label>
-                        <input
-                          type="text"
-                          id={`answer-${question.field}`}
-                          value={answers[question.field] ?? ""}
-                          placeholder={FIELD_LABEL[question.field] ?? question.field}
-                          onChange={(event) =>
-                            onAnswers({ ...answers, [question.field]: event.target.value })
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" && !working) onSendAnswers();
-                          }}
-                        />
-                      </div>
+                      <QuestionAnswer
+                        key={question.field}
+                        field={question.field}
+                        question={question.question}
+                        value={answers[question.field] ?? ""}
+                        onChange={(value) => onAnswers({ ...answers, [question.field]: value })}
+                        onSubmit={onSendAnswers}
+                        disabled={working}
+                      />
                     ))}
                     <button
                       className="btn primary"
-                      disabled={working}
+                      disabled={working || !session.questions.some((question) => answers[question.field]?.trim())}
                       onClick={onSendAnswers}
                     >
                       {busy === "answers" ? "Отправляю…" : "Ответить"}

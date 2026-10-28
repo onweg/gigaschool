@@ -408,7 +408,6 @@ export function App() {
     goto("program");
   }
 
-
   return (
     <div className="shell">
       <Sidebar
@@ -500,7 +499,7 @@ export function App() {
                 </nav>
                 <div className="artifact-body">
               <div hidden={section !== "program"}>
-<Reveal>
+                <Reveal>
                 <div className="card">
                   <h3>Паспорт программы</h3>
                   <dl className="program-facts">
@@ -542,7 +541,7 @@ export function App() {
               </div>
 
               <div hidden={section !== "competencies"}>
-<Reveal delay={0.04}>
+                <Reveal delay={0.04}>
                 <div className="card">
                   <h3>
                     Карта компетенций <span className="n">{program.outcomes.length} РО</span>
@@ -582,7 +581,7 @@ export function App() {
               </div>
 
               <div hidden={section !== "plan"}>
-<Reveal delay={0.08}>
+                <Reveal delay={0.08}>
                 <div className="card">
                   <h3>Учебно-тематический план</h3>
                   <HoursTable
@@ -595,7 +594,7 @@ export function App() {
               </div>
 
               <div hidden={section !== "report"}>
-<Reveal delay={0.12}>
+                <Reveal delay={0.12}>
                 <div className="card">
                   <h3>
                     Отчёт автопроверки
@@ -618,9 +617,8 @@ export function App() {
               </div>
 
 
-
               <div hidden={section !== "exports"}>
-<Reveal delay={0.1}>
+                <Reveal delay={0.1}>
                 <div className="card">
                   <h3>Действия и выгрузки</h3>
                   {session?.program && (
@@ -752,7 +750,7 @@ export function App() {
                 <summary>Экономика генерации</summary>
               <Reveal delay={0.08}>
                 <div className="card">
-                  
+
                   <div className="metrics">
                     <div className="metric">
                       <div className="v">

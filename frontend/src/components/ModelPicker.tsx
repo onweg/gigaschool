@@ -14,8 +14,15 @@ export function ModelPicker({ catalog, value, disabled, onChange, loadError, onR
   const model = catalog?.models.find(m => m.id === value);
   useEffect(() => {
     const close = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    // Safari не переводит фокус на кнопку при клике: blur получает null
+    // и раньше удалял пункт меню до click. Закрываем по реальному фокусу снаружи.
+    const focusOutside = (e: FocusEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
+    document.addEventListener("focusin", focusOutside);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("focusin", focusOutside);
+    };
   }, []);
   useEffect(() => { if (open) root.current?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')?.focus(); }, [open]);
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
@@ -37,7 +44,7 @@ export function ModelPicker({ catalog, value, disabled, onChange, loadError, onR
       const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (index + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
       buttons[next]?.focus();
     }
-  }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false); }}>
+  }}>
     <button ref={trigger} className="model-picker-trigger" aria-label={`Выбрать модель. ${model?.name ?? "Выбор модели"}`} aria-expanded={open} aria-haspopup="listbox" aria-controls={menuId}
       disabled={disabled} onClick={() => { setError(""); setOpen(!open); }} title={disabled ? "Дождитесь завершения текущей операции" : value}>
       <Icon name="spark" size={16} /><span>{model?.name ?? (loadError ? "Выбор модели" : "Загрузка моделей…")}</span><Icon name="chevron" size={13} />

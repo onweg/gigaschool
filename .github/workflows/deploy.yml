@@ -22,5 +22,31 @@ jobs:
             cd /opt/gigaschool
             git fetch origin main
             git reset --hard origin/main
-            docker compose up -d --build
+            docker compose build
+            # Проверяем серверный профиль до замены запущенных контейнеров.
+            # Ключи не печатаем; build_provider не вызывает платную модель.
+            docker compose run --rm --no-deps backend python -c '
+            from app.config import get_settings, build_provider
+            s = get_settings()
+            if s.llm_profile != "yandex_dev":
+                raise SystemExit("VPS: укажите LLM_PROFILE=yandex_dev в /opt/gigaschool/.env")
+            build_provider()
+            print("Конфигурация VPS проверена: yandex_dev")
+            '
+            # Пересоздаём frontend тоже: nginx должен заново получить адрес backend.
+            docker compose up -d --force-recreate backend frontend
+            ready=0
+            for attempt in $(seq 1 30); do
+              if docker compose exec -T frontend wget -q -O /dev/null http://127.0.0.1/api/health; then
+                ready=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != "1" ]; then
+              docker compose ps -a
+              docker compose logs --tail=60 backend frontend
+              echo "Деплой не прошёл проверку: /api/health недоступен через nginx"
+              exit 1
+            fi
             docker image prune -f

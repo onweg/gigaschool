@@ -25,13 +25,16 @@ import "@fontsource/jetbrains-mono/latin-500.css";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { OpeningScene } from "./components/OpeningScene";
 import "./styles.css";
 import "./workspace.css";
 import "./review.css";
 import "./mobile.css";
+import "./premium.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
+    <OpeningScene />
   </React.StrictMode>
 );

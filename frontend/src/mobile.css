@@ -1,4 +1,4 @@
-/* Mobile presentation only. Desktop keeps its existing palette and layout. */
+/* Mobile layout and touch controls. Shared identity is defined in premium.css. */
 .mobile-menu-toggle, .mobile-menu-dialog { display: none; }
 
 @media (max-width: 760px) {

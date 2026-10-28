@@ -6,6 +6,7 @@ import { References } from "./References";
 import { QuestionAnswer } from "./QuestionAnswer";
 import { RequestPreferences } from "./RequestPreferences";
 import { Icon, type IconName } from "./Icon";
+import { TowerSilhouette } from "./TowerSilhouette";
 import type { SectionKey } from "./Sidebar";
 import { formatDuration, StatusLine, type MarkKind } from "./Motion";
 
@@ -167,7 +168,7 @@ export function ChatWorkspace({
         <div className="conversation-inner">
           {welcome ? (
             <div className="welcome">
-              <div className="welcome-mark"><Icon name="spark" size={34} /></div>
+              <div className="welcome-mark"><TowerSilhouette /></div>
               <h1>Создайте образовательную<br />{" "}программу <span>с помощью ИИ</span></h1>
               <div className="welcome-features">
                 <span><Icon name="program" size={15} />Шаблоны АЦР</span>

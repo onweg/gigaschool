@@ -1,0 +1,92 @@
+/* Shared visual identity; layout adaptations remain in mobile.css. */
+:root {
+  --font: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+  --bg: #080d19;
+  --surface: #111b2d;
+  --surface-2: #18243b;
+  --surface-3: #22334f;
+  --line: #2c3d5b;
+  --line-soft: #1e2d46;
+  --text: #f1f5ff;
+  --text-dim: #c5d0e5;
+  --muted: #a0aec8;
+  --faint: #95a5c0;
+  --green: #9fc5ff;
+  --green-bright: #c3dcff;
+  --green-deep: #213d63;
+  --green-dim: #80b2ff12;
+}
+.main {
+  background:
+    radial-gradient(ellipse at 68% -8%, #3561b24d, transparent 58%),
+    radial-gradient(ellipse at 100% 70%, #514c9621, transparent 55%),
+    radial-gradient(ellipse at 0% 100%, #1b416c33, transparent 50%),
+    linear-gradient(140deg, #0d1628, #080d19 65%);
+}
+.sidebar { background: linear-gradient(160deg, #132037, #0b1220 60%); border-color: #3e55732e; }
+.workspace-header { background: #0c142630; border-color: #7fa4d41a; }
+.nav-item.active { background: linear-gradient(110deg, #2b4872, #213550); color: #d5e7ff; }
+.new-program { background: linear-gradient(115deg, #223b5c, #182b46); border-color: #4e6e944d; color: #d5e7ff; }
+.new-program:hover:not(:disabled) { background: #2b4569; border-color: #688dbb; }
+.workspace-name, .brand-caption { color: var(--text-dim); }
+.avatar { background: #263d5e; color: #c8ddff; }
+.welcome h1 { font-weight: 500; letter-spacing: -.055em; }
+.welcome h1 span { color: #a6c9ff; background: linear-gradient(100deg, #e2edff, #95bcff 55%, #b3b8f2); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.welcome-mark { width: 150px; height: 100px; margin: 0 auto 8px; border: 0; border-radius: 0; background: none; box-shadow: none; transform: none; }
+.welcome-mark .tower-silhouette { width: 150px; height: 126px; transform: none; filter: drop-shadow(0 0 16px #79aaff55); }
+.welcome-features, .welcome-features svg { color: #a8bbd7; }
+.example-card { background: linear-gradient(135deg, #1d304bba, #131f34b3); border-color: #6e93c533; border-radius: 20px; box-shadow: inset 0 1px #b0d3ff08; }
+.example-card:hover { background: linear-gradient(135deg, #284365, #192b47); border-color: #7ea3d573; }
+.example-icon { color: #abc9ef; }
+.example-card > svg { color: #8ea9cf; }
+.workspace-composer { background: linear-gradient(120deg, #21334de8, #16243ce8); border-color: #7a9cc15e; border-radius: 24px; box-shadow: 0 20px 60px #0308134d, inset 0 1px #d7e8ff12; }
+.workspace-composer:focus-within { border-color: #94b9ef; box-shadow: 0 0 0 3px #86b3ff0a, 0 20px 60px #0308134d; }
+.workspace-composer textarea::placeholder { color: #a9b9d0; }
+button.btn.primary, .send-button, .composer-tools .send-button { background: linear-gradient(135deg, #c3dcff, #8ab5f9); color: #0b1d37; box-shadow: inset 0 1px #ffffff40, 0 4px 16px #315b9933; }
+button.btn.primary:hover:not(:disabled), .send-button:hover:not(:disabled) { background: #c8deff; }
+.composer-tools .model-picker-trigger, .review-model-control .model-picker-trigger, .model-picker-fixed { background: #263d5b; border-color: #6e8fb652; color: #dae8ff; }
+.model-picker-trigger:hover:not(:disabled), .model-picker-trigger[aria-expanded="true"] { background: #355276; }
+.program-artifact, .review-reader, .review-agent, .review-edit-panel, .review-proposal { border-color: #45628a80; box-shadow: inset 0 1px #b0d3ff08, 0 16px 40px #02081720; }
+.composer-dock { background: transparent; }
+.tower-silhouette { display: block; overflow: visible; }
+.opening-scene { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; pointer-events: auto; background: radial-gradient(ellipse at 50% 45%, #1b3457, #0b1425 55%, #070d18); animation: opening-exit .5s 1.8s ease forwards; }
+.opening-halo { position: absolute; width: min(75vw, 800px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, #6899ed1f, #496fa508 50%, transparent 70%); animation: opening-breathe 2.3s ease-out both; }
+.opening-art { width: min(78vw, 400px); position: relative; }
+.opening-art .tower-silhouette { width: 100%; filter: drop-shadow(0 0 12px #8ab7ff44); }
+.opening-brand { text-align: center; color: #ecf3ff; font-size: 28px; font-weight: 600; letter-spacing: .14em; margin-top: 18px; animation: opening-type .8s .5s both; }
+.opening-brand span { display: block; font-size: 11px; font-weight: 400; letter-spacing: .09em; color: #a5b9d8; margin-top: 14px; }
+.opening-scene .tower-building { animation: tower-rise 1.3s cubic-bezier(.2,.7,.2,1) both; }
+.opening-scene .tower-building-0 { animation-delay: .12s; }
+.opening-scene .tower-building-1 { animation-delay: .24s; }
+.opening-scene .tower-outline { stroke-dasharray: 1; stroke-dashoffset: 1; animation: tower-trace 1.6s .1s ease forwards; }
+.opening-scene .tower-windows { animation: tower-light 1.4s .4s both; }
+@keyframes tower-trace { to { stroke-dashoffset: 0; } }
+@keyframes tower-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes tower-light { from { opacity: 0; } to { opacity: 1; } }
+@keyframes opening-type { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes opening-breathe { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1.15); } }
+@keyframes opening-exit { to { opacity: 0; visibility: hidden; } }
+@media (min-width: 761px) {
+  .welcome h1 { font-size: clamp(34px, 3.5vw, 58px); }
+  .nav-item { font-size: 14px; }
+  .welcome-features { font-size: 12px; }
+  .example-card strong { font-size: 15px; }
+  .example-detail { font-size: 12px; }
+  .workspace-composer textarea { font-size: 15px; }
+}
+@media (max-width: 760px) {
+  .main { background: radial-gradient(ellipse at 100% 5%, #3b63a94a, transparent 65%), radial-gradient(ellipse at 0% 80%, #45478021, transparent 65%), #0a1120; }
+  .welcome-mark { width: 128px; height: 94px; }
+  .welcome-mark .tower-silhouette { width: 128px; height: 108px; }
+  .opening-brand { font-size: 24px; }
+  .opening-brand span { font-size: 10px; letter-spacing: .04em; }
+}
+@media (max-height: 780px) and (min-width: 761px) {
+  .welcome-mark { height: 68px; }
+  .welcome-mark .tower-silhouette { height: 86px; }
+  .welcome h1 { font-size: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .opening-scene { display: none; animation: none; }
+  .opening-scene * { animation: none !important; }
+}

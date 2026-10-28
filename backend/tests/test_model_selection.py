@@ -34,6 +34,19 @@ def test_catalog_excludes_embedding_and_secrets():
     assert not {'api_key', 'base_url'} & data.keys()
 
 
+@pytest.mark.parametrize('model', ['gpt://folder/yandexgpt/latest', 'ai-sage/Giga-Embeddings-instruct-3B', 'other-model'])
+def test_foreign_models_cannot_enter_router_or_api(model):
+    base = OpenAICompatProvider(base_url='https://api.cloud.ru/v1', api_key='fake', model=model)
+    with pytest.raises(ValueError, match='разрешены только'):
+        ModelRouter(base)
+    for endpoint in ['/api/sessions', '/api/generate']:
+        response = client.post(endpoint, json={'text': 'Программа по Python', 'model_id': model})
+        assert response.status_code == 422, response.text
+    session = store.create()
+    assert client.post(f'/api/sessions/{session.id}/model', json={'model_id': model}).status_code == 422
+    assert client.post('/api/generate', json={'session_id': session.id, 'model_id': model}).status_code == 422
+
+
 def test_selection_persists_without_changing_program_or_review(tmp_path):
     sid = ready()
     before = client.get(f'/api/sessions/{sid}').json()

@@ -1,8 +1,6 @@
 """Провайдер для любого OpenAI-совместимого эндпоинта.
 
 Проверено с:
-  * Yandex Foundation Models — https://llm.api.cloud.yandex.net/v1,
-    модель `gpt://<folder-id>/yandexgpt/latest`, авторизация `Api-Key <key>`
   * Cloud.ru Evolution Foundation Models — OpenAI-совместимый эндпоинт,
     авторизация `Bearer <token>` (для финальной сдачи кейса)
 """

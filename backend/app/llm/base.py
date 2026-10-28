@@ -3,7 +3,7 @@
 Архитектурное требование кейса: на финале разрешены только модели из каталога
 Cloud.ru Evolution Foundation Models. Поэтому вся работа с моделью идёт через
 этот интерфейс, а конкретный провайдер выбирается переменными окружения.
-Переезд Yandex → Cloud.ru = смена LLM_BASE_URL / LLM_MODEL без правок логики.
+Разрешены только GigaChat 3 Pro и GigaChat 3.5 Reasoning из фиксированного каталога.
 """
 from __future__ import annotations
 

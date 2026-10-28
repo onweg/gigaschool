@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from app.llm.catalog import MODELS
+
 
 class ConfigError(RuntimeError):
     """Конфигурация не позволяет запуститься. Текст виден человеку."""
@@ -259,6 +261,11 @@ def build_provider():  # noqa: ANN201 — возвращает LLMProvider
             )
         extra = extra_hosts(s.llm_extra_hosts)
         check_base_url(s.llm_base_url, extra)
+        if s.llm_model not in MODELS:
+            raise ConfigError(
+                "разрешены только GigaChat 3 Pro и GigaChat 3.5 Reasoning. "
+                "Укажите OPENAI_MODEL (или LLM_MODEL): " + ", ".join(MODELS)
+            )
         provider = OpenAICompatProvider(
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,

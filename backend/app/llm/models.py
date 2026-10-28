@@ -8,15 +8,8 @@ from app.llm.base import LLMProvider
 from app.llm.cache import CachedProvider
 from app.llm.openai_compat import OpenAICompatProvider
 
-PRO = 'GigaChat/GigaChat-3-Pro'
-REASONING = 'ai-sage/GigaChat3.5-432B-A28B-Reasoning'
-# Тарифы каталога площадки, предоставленные пользователем 28.10.2026, ₽/1 млн.
-MODELS = {
-    PRO: {'id': PRO, 'name': 'GigaChat 3 Pro', 'description': 'Быстрая генерация программ и повседневные правки',
-          'reasoning': False, 'input_per_million': 73.03, 'output_per_million': 176.39},
-    REASONING: {'id': REASONING, 'name': 'GigaChat 3.5 Reasoning', 'description': 'С рассуждениями — для сложных задач и внимательной проверки',
-                'reasoning': True, 'input_per_million': 96.22, 'output_per_million': 288.60},
-}
+from app.llm.catalog import MODELS, PRO, REASONING
+
 selected_model: ContextVar[str] = ContextVar('selected_model', default='')
 
 
@@ -38,8 +31,7 @@ class ModelRouter(LLMProvider):
         self.default = PRO if self.offline else base.model
         self.options = {k: dict(v) for k, v in MODELS.items()}
         if self.default not in self.options:
-            self.options[self.default] = {'id': self.default, 'name': self.default, 'description': 'Модель, настроенная на сервере', 'reasoning': False,
-                'input_per_million': None, 'output_per_million': None}
+            raise ValueError('разрешены только GigaChat 3 Pro и GigaChat 3.5 Reasoning')
         self.pool: dict[str, LLMProvider] = {}
         for model in self.options:
             if self.offline or model == self.default:

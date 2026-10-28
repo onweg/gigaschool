@@ -74,15 +74,33 @@ def test_cloud_ru_starts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert build_provider().name == "openai_compat"
 
 
-def test_development_host_is_allowed_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Разработке нужен Yandex — разрешаем его домен явно, а не всё подряд."""
+@pytest.mark.parametrize('variable', ['OPENAI_MODEL', 'LLM_MODEL'])
+@pytest.mark.parametrize('model', ['gpt://folder/yandexgpt/latest', 'ai-sage/Giga-Embeddings-instruct-3B', 'other-model'])
+def test_foreign_models_refused_on_allowed_gateway(monkeypatch, variable, model):
+    monkeypatch.setenv('OPENAI_API_KEY', 'fake')
+    monkeypatch.setenv('OPENAI_BASE_URL', 'https://foundation-models.api.cloud.ru/v1')
+    monkeypatch.setenv(variable, model)
+    with pytest.raises(ConfigError, match='разрешены только'):
+        build_provider()
+
+
+def test_reasoning_model_starts(monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'fake')
+    monkeypatch.setenv('OPENAI_BASE_URL', 'https://foundation-models.api.cloud.ru/v1')
+    monkeypatch.setenv('OPENAI_MODEL', 'ai-sage/GigaChat3.5-432B-A28B-Reasoning')
+    assert build_provider().model == 'ai-sage/GigaChat3.5-432B-A28B-Reasoning'
+
+
+def test_yandex_model_refused_even_with_explicit_extra_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Разрешение домена не должно обходить фиксированный каталог моделей."""
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://llm.api.cloud.yandex.net/v1")
     monkeypatch.setenv("LLM_MODEL", "gpt://folder/yandexgpt/latest")
     monkeypatch.setenv("LLM_EXTRA_HOSTS", "llm.api.cloud.yandex.net")
     get_settings.cache_clear()
 
-    assert build_provider().name == "openai_compat"
+    with pytest.raises(ConfigError, match="разрешены только"):
+        build_provider()
 
 
 def test_extra_host_does_not_open_other_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,7 +125,7 @@ def test_extra_hosts_refuse_wildcards_and_zones(
     """
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv("LLM_EXTRA_HOSTS", value)
     get_settings.cache_clear()
 
@@ -123,7 +141,7 @@ def test_retired_blanket_flag_is_refused(monkeypatch: pytest.MonkeyPatch) -> Non
     """
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv("LLM_ALLOW_ANY_HOST", "1")
     get_settings.cache_clear()
 
@@ -144,7 +162,7 @@ def test_extra_host_can_be_added(monkeypatch: pytest.MonkeyPatch) -> None:
     """Площадка может выдать шлюз на другом домене — это настраивается."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://llm.example-platform.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv("LLM_EXTRA_HOSTS", "example-platform.ru")
     get_settings.cache_clear()
 
@@ -154,7 +172,7 @@ def test_extra_host_can_be_added(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_key_without_endpoint_says_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Молчаливый откат на заглушку — худший сценарий: демо выглядит рабочим."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     get_settings.cache_clear()
 
     with pytest.raises(ConfigError, match="не задан её адрес"):
@@ -176,7 +194,7 @@ def test_mock_is_refused_when_a_real_key_is_present(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     get_settings.cache_clear()
 
     with pytest.raises(ConfigError, match="LLM_PROVIDER=mock"):
@@ -215,7 +233,7 @@ def test_startup_report_hides_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("OPENAI_API_KEY", "AQVNsecret0123456789")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     get_settings.cache_clear()
 
     report = "\n".join(describe_config())
@@ -241,7 +259,7 @@ def test_no_warnings_in_a_clean_setup(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv("METRICS_TOKEN", "s3cret")
     get_settings.cache_clear()
 
@@ -307,7 +325,7 @@ def test_bad_numbers_are_explained(
     а тихо испорченный комплект — поэтому отказ при старте и понятный текст."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "GigaChat")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     monkeypatch.setenv(name, value)
     get_settings.cache_clear()
 
@@ -395,7 +413,7 @@ def test_rule_names_its_source() -> None:
 def test_malformed_url_refuses_to_start(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", url)
-    monkeypatch.setenv("OPENAI_MODEL", "m")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     with pytest.raises(ConfigError):
         build_provider()
 
@@ -435,7 +453,7 @@ def test_provider_refuses_foreign_host_even_without_config(caplog: pytest.LogCap
 def test_built_provider_carries_host_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "m")
+    monkeypatch.setenv("OPENAI_MODEL", "GigaChat/GigaChat-3-Pro")
     provider = build_provider()
     assert provider.host == "foundation-models.api.cloud.ru"
 

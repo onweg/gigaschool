@@ -32,6 +32,12 @@ const FIELD_LABEL: Record<string, string> = {
   attestation_form: "Итоговая аттестация",
 };
 
+const STUDY_FORM_LABEL: Record<string, string> = {
+  ochnaya: "Очная",
+  ochno_zaochnaya: "Очно-заочная",
+  zaochnaya: "Заочная",
+};
+
 export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   // Почему агент недоступен — показываем причину, а не просто красную точку.
@@ -504,7 +510,7 @@ export function App() {
                   <h3>Паспорт программы</h3>
                   <dl className="program-facts">
                     <div><dt>Для кого</dt><dd>{program.meta.audience || "—"}</dd></div>
-                    <div><dt>Форма обучения</dt><dd>{program.meta.study_form || "—"}</dd></div>
+                    <div><dt>Форма обучения</dt><dd>{STUDY_FORM_LABEL[program.meta.study_form] ?? program.meta.study_form ?? "—"}</dd></div>
                     <div><dt>Документ</dt><dd>{program.meta.issued_document || "—"}</dd></div>
                   </dl>
                   <div className="lede" style={{ marginBottom: 14 }}>
